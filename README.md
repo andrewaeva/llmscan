@@ -67,7 +67,7 @@ Tree-sitter подключён без CGO (через `smacker/go-tree-sitter`).
 # Пример: Claude через прокси, совместимый с Anthropic Messages API.
 export ANTHROPIC_BASE_URL=https://your-proxy.example.com
 export ANTHROPIC_AUTH_TOKEN=sk-proxy-xyz
-./llmscan scan ./code --provider anthropic --model claude-3-5-sonnet-latest
+./llmscan scan ./code --provider anthropic --model claude-sonnet-4-6
 ```
 
 ---
@@ -233,7 +233,7 @@ agents:
   generic:         { enabled: true }
   verifier:
     enabled: true
-    model: { provider: anthropic, model: claude-3-5-sonnet-latest }
+    model: { provider: anthropic, model: claude-sonnet-4-6 }
   fp_filter: { enabled: true }
 ```
 

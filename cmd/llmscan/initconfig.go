@@ -28,17 +28,17 @@ func initConfigCmd() *cobra.Command {
 
 const sampleConfig = `# llmscan sample configuration (v3)
 default_model:
-  provider: openai          # openai | anthropic
-  model: gpt-4o-mini
+  provider: anthropic       # anthropic | openai
+  model: claude-sonnet-4-6
   temperature: 0.1
   max_tokens: 4096
-  # base_url: https://api.openai.com/v1   # optional, e.g. for OpenAI-compatible endpoints
-  # api_key_env: OPENAI_API_KEY
+  # base_url: https://api.anthropic.com   # optional; also picks up ANTHROPIC_BASE_URL
+  # api_key_env: ANTHROPIC_API_KEY        # or ANTHROPIC_AUTH_TOKEN for Bearer proxies
 
 agents:
   orchestrator:
     enabled: true
-    # model: { provider: anthropic, model: claude-3-5-sonnet-latest }
+    # model: { provider: openai, model: gpt-4o-mini }
   injection:       { enabled: true }
   secrets:         { enabled: true }
   auth:            { enabled: true }
@@ -52,7 +52,7 @@ agents:
     # Use a stronger model for verification.
     model:
       provider: anthropic
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-6
       api_key_env: ANTHROPIC_API_KEY
 
   fp_filter:

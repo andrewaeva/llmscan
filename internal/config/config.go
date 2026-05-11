@@ -12,7 +12,7 @@ import (
 // ModelSpec describes a single LLM model used by an agent.
 type ModelSpec struct {
 	Provider    string  `yaml:"provider"`              // "openai" | "anthropic"
-	Model       string  `yaml:"model"`                 // e.g. "gpt-4o-mini", "claude-3-5-sonnet-latest"
+	Model       string  `yaml:"model"`                 // e.g. "claude-sonnet-4-6", "gpt-4o-mini"
 	Temperature float64 `yaml:"temperature,omitempty"` // default 0.1
 	MaxTokens   int     `yaml:"max_tokens,omitempty"`  // default 4096
 	BaseURL     string  `yaml:"base_url,omitempty"`    // optional override (OpenAI-compatible endpoints)
@@ -133,11 +133,11 @@ const (
 func Default() Config {
 	return Config{
 		DefaultModel: ModelSpec{
-			Provider:    "openai",
-			Model:       "gpt-4o-mini",
+			Provider:    "anthropic",
+			Model:       "claude-sonnet-4-6",
 			Temperature: 0.1,
 			MaxTokens:   4096,
-			APIKeyEnv:   "OPENAI_API_KEY",
+			APIKeyEnv:   "ANTHROPIC_API_KEY",
 		},
 		Agents: map[string]AgentConfig{
 			"orchestrator":    {Enabled: true},
