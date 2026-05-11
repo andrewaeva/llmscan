@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/andrewaeva/llmscan/internal/config"
@@ -80,11 +81,28 @@ type oaMessage struct {
 	Content string `json:"content"`
 }
 type oaRequest struct {
-	Model          string         `json:"model"`
-	Messages       []oaMessage    `json:"messages"`
-	Temperature    float64        `json:"temperature"`
-	MaxTokens      int            `json:"max_tokens,omitempty"`
-	ResponseFormat map[string]any `json:"response_format,omitempty"`
+	Model               string         `json:"model"`
+	Messages            []oaMessage    `json:"messages"`
+	Temperature         float64        `json:"temperature"`
+	MaxTokens           int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
+	ResponseFormat      map[string]any `json:"response_format,omitempty"`
+}
+
+// modelUsesMaxCompletionTokens reports whether the given model family rejects
+// the legacy `max_tokens` field and requires `max_completion_tokens` instead
+// (GPT-5 family, o1/o3/o4 reasoning models).
+func modelUsesMaxCompletionTokens(model string) bool {
+	m := strings.ToLower(model)
+	switch {
+	case strings.HasPrefix(m, "gpt-5"),
+		strings.HasPrefix(m, "o1"),
+		strings.HasPrefix(m, "o3"),
+		strings.HasPrefix(m, "o4"),
+		strings.HasPrefix(m, "chat-latest"):
+		return true
+	}
+	return false
 }
 type oaResponse struct {
 	Choices []struct {
@@ -111,7 +129,11 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 		Model:       c.spec.Model,
 		Messages:    msgs,
 		Temperature: c.spec.Temperature,
-		MaxTokens:   c.spec.MaxTokens,
+	}
+	if modelUsesMaxCompletionTokens(c.spec.Model) {
+		body.MaxCompletionTokens = c.spec.MaxTokens
+	} else {
+		body.MaxTokens = c.spec.MaxTokens
 	}
 	if req.TemperatureOverride != nil {
 		body.Temperature = *req.TemperatureOverride
