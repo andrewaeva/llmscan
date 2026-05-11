@@ -30,8 +30,13 @@ regex+entropy для секретов, IaC-сканеры, baseline и diff-ре
 | 15 | IaC сканеры: Dockerfile, k8s, Terraform, GitHub Actions | `skills/iac-*`, `internal/iac` |
 | 16 | `llmscan eval` — оффлайн-адаптеры датасетов (OWASP/SecurityEval/Juliet/Generic) | `internal/eval` |
 | 17 | Расширенный CLI: 13 новых флагов, новая команда `eval` | `cmd/llmscan` |
+| 18 | Цветной консольный отчёт (severity-бейджи, `--color auto/always/never`) | `internal/report` |
+| 19 | Параллелизм: `--agent-parallel`, per-chunk `--concurrency` + progress-логи | `internal/pipeline` |
+| 20 | Speed knobs: `--fast`, `--no-orchestrator`, `--no-verifier`, `--no-fp-filter` | `cmd/llmscan` |
+| 21 | One-shot endpoint-лог (`provider model base_url`) при старте LLM-клиента | `internal/llm` |
+| 22 | **`--deep`**: sub-agent верификация high+ находок с тулами read_file/grep/list_dir/git_blame | `internal/agents/deepscanner.go`, `internal/tools`, `internal/llm/anthropic_tools.go` |
 
-Все v3 фичи включены по умолчанию, кроме voting (`--vote-n=0`).
+Все v3 фичи включены по умолчанию, кроме voting (`--vote-n=0`) и `--deep`.
 
 ---
 
@@ -127,6 +132,8 @@ discover → parse-ast → depgraph
         ↓
   attach taint traces
         ↓
+  deep pass (опционально, --deep) ← sub-agent верификация high+
+        ↓
   score filter ← --min-score
         ↓
   baseline diff/write
@@ -157,6 +164,21 @@ discover → parse-ast → depgraph
 | `--json-retries N` | Сколько раз ретраить при провале JSON-schema (default 2) |
 | `--cache-path PATH` | Путь к sqlite-кэшу (default `.llmscan/cache.db`) |
 | `--no-cache` | Полностью отключить кэш |
+| `--agent-parallel N` | Сколько scanner-агентов запускать параллельно (default 8) |
+| `--concurrency N` | Параллелизм внутри одного агента — чанки на файл (default 16) |
+| `--fast` | Скоростной пресет: отключает orchestrator/verifier/fp_filter |
+| `--no-orchestrator` | Пропустить LLM-планировщик |
+| `--no-verifier` | Пропустить verifier-агент |
+| `--no-fp-filter` | Пропустить fp_filter |
+| `--color MODE` | `auto` (default) / `always` / `never` для текстового отчёта |
+| `--deep` | Включить sub-agent верификацию high+ находок (см. ниже) |
+| `--deep-severity LEVEL` | Минимальная severity для deep-пасса (default `high`) |
+| `--deep-max-hotspots N` | Максимум hotspot'ов на запуск (default 20) |
+| `--deep-budget N` | Лимит tool-вызовов на hotspot (default 40) |
+| `--deep-concurrency N` | Параллельных deep-агентов (default 4) |
+| `--deep-model NAME` | Переопределить модель deep-агента |
+| `--deep-provider NAME` | Переопределить провайдера (поддерживается только `anthropic`) |
+| `--deep-no-cache` | Отключить sqlite-кеш tool-вызовов (включён по умолчанию) |
 
 Старые флаги (`--model`, `--provider`, `--focus`, `--rag`, `--skills-dir`, `--fail-on` и т.д.) сохранены.
 
@@ -186,6 +208,53 @@ discover → parse-ast → depgraph
 
 Печатает YAML-шаг Harness CI/STO, который запускает контейнер с `llmscan`,
 сохраняет SARIF и сам прокидывает severity-threshold для падения пайплайна.
+
+---
+
+## Deep mode (`--deep`)
+
+Опциональный sub-agent пасс: после основной пайплайны Anthropic-агент берёт
+находки уровня `--deep-severity` и выше (default `high`), сортирует по
+severity и для каждой запускает tool-loop:
+
+- `read_file(path, start, end)` — чтение фрагмента файла
+- `grep(pattern, glob, max)` — поиск по проекту
+- `list_dir(path)` — листинг каталога
+- `git_blame(path, line)` — автор/коммит для строки
+
+Все тулы read-only, sandbox запирает доступ внутри корня скана через
+`filepath.Rel` + `EvalSymlinks` (защита от path traversal и symlink-escape).
+Output тулов обрезается (≤32 KiB, ≤500 строк, ≤100 grep-матчей, ≤200 dir-записей).
+Лимит tool-вызовов на hotspot — `--deep-budget` (default 40).
+
+Агент возвращает в финальном сообщении JSON-блок:
+
+```json
+{"verdict": "confirmed|refuted|inconclusive", "reason": "...", "fix": "..."}
+```
+
+- `refuted` → `Finding.FalsePositive = true` (отсев в fp_filter)
+- `confirmed` / `inconclusive` → остаются с полями `DeepVerified`, `DeepVerdict`,
+  `DeepComment`, `DeepModel`, `DeepTrace` (все tool-вызовы со step/args/result/ms)
+
+Кеш tool-вызовов лежит в той же `.llmscan/cache.db` (таблица `deep_tool_cache`,
+ключ = `sha256(tool|args|root)`), включён по умолчанию, отключается через
+`--deep-no-cache`.
+
+Консольный отчёт показывает цветной бейдж: `confirmed` (red), `refuted` (green),
+`inconclusive` (yellow) и число tool calls.
+
+Типичный запуск:
+
+```bash
+./llmscan scan . --deep --verbose
+./llmscan scan . --deep --deep-severity critical --deep-budget 60
+./llmscan scan . --diff origin/main...HEAD --deep    # PR-ревью
+```
+
+**Ограничение**: реализован только Anthropic. Если активный провайдер не
+`anthropic`, deep-пасс пропускается с предупреждением (OpenAI tools API
+пока не подключён).
 
 ---
 
@@ -235,6 +304,17 @@ agents:
     enabled: true
     model: { provider: anthropic, model: claude-sonnet-4-6 }
   fp_filter: { enabled: true }
+
+deep:
+  enabled: false
+  min_severity: high
+  max_hotspots: 20
+  budget: 40
+  concurrency: 4
+  cache: true
+  # model:    claude-sonnet-4-6
+  # provider: anthropic
+  max_file_bytes: 524288   # 512 KiB на одно read_file
 ```
 
 `./llmscan init` положит файл со всеми комментариями.
@@ -401,7 +481,9 @@ internal/
   suppress/            inline ignore-markers
   symexpand/           cross-function context expansion
   taint/               source → sanitizer → sink chains (5 langs)
-  types/               Finding, Report, TraceHop
+  tools/               sandbox tools для deep-агента (read_file/grep/list_dir/git_blame)
+  agents/              deepscanner — sub-agent верификация high+ находок
+  types/               Finding, Report, TraceHop, DeepToolCall
   voting/              N-of-K consensus
   watchlist/           per-language sources/sinks/sanitizers
 skills/                LLM agent prompts (markdown с YAML-фронтматтером)
