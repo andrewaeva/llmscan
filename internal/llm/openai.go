@@ -44,6 +44,11 @@ func newOpenAIClient(spec config.ModelSpec, label string) (*openAIClient, error)
 	if envName != "" && spec.APIKeyEnv == "" {
 		spec.APIKeyEnv = envName
 	}
+	defaultBase := "https://api.openai.com/v1"
+	if label == "opencode" {
+		defaultBase = "https://api.opencode.ai/v1"
+	}
+	logEndpointOnce(label, spec.Model, base, defaultBase, spec.APIKeyEnv, "auth=bearer")
 	return &openAIClient{baseURL: base, apiKey: apiKey, spec: spec, http: defaultHTTP(), label: label}, nil
 }
 

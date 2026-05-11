@@ -85,6 +85,13 @@ func newAnthropicClient(spec config.ModelSpec) (*anthropicClient, error) {
 		version = "2023-06-01"
 	}
 
+	authHeader := "x-api-key"
+	if useBearer {
+		authHeader = "bearer"
+	}
+	logEndpointOnce("anthropic", spec.Model, base, "https://api.anthropic.com", spec.APIKeyEnv,
+		"auth="+authHeader, "version="+version)
+
 	return &anthropicClient{
 		baseURL:          base,
 		apiKey:           apiKey,

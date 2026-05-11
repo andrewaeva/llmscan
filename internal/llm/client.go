@@ -12,13 +12,40 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andrewaeva/llmscan/internal/config"
 )
+
+// endpointLogOnce ensures each (provider|baseURL|model|auth) tuple is logged only once per process.
+var endpointLogOnce sync.Map
+
+// logEndpointOnce prints one informational line per unique LLM endpoint configuration.
+// `extra` lets callers append fields like "auth=bearer (proxy)" or "auth=x-api-key".
+func logEndpointOnce(provider, model, baseURL, defaultBaseURL, authEnv string, extra ...string) {
+	key := provider + "|" + baseURL + "|" + model + "|" + authEnv
+	if _, loaded := endpointLogOnce.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	mode := "direct"
+	if baseURL != "" && baseURL != defaultBaseURL {
+		mode = "proxy"
+	}
+	fields := []string{
+		"provider=" + provider,
+		"model=" + model,
+		"base_url=" + baseURL,
+		"mode=" + mode,
+		"auth_env=" + authEnv,
+	}
+	fields = append(fields, extra...)
+	log.Printf("[llm] %s", strings.Join(fields, " "))
+}
 
 // Message is a single chat message.
 type Message struct {
