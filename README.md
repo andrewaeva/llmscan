@@ -47,6 +47,29 @@ go build -o llmscan ./cmd/llmscan
 Требуется Go 1.24+. SQLite — pure-Go (`modernc.org/sqlite`), CGO не нужен для кэша.
 Tree-sitter подключён без CGO (через `smacker/go-tree-sitter`).
 
+### LLM-провайдеры и env-переменные
+
+| Provider | Base URL env | Key env (в порядке приоритета) | Auth-заголовок |
+|----------|--------------|---------------------------------|----------------|
+| `openai` | `OPENAI_BASE_URL` (default `https://api.openai.com/v1`) | `spec.api_key_env` → `OPENAI_API_KEY` | `Authorization: Bearer ...` |
+| `opencode` | `OPENCODE_BASE_URL`, `OPENAI_BASE_URL` | `OPENCODE_API_KEY` → `OPENAI_API_KEY` | `Authorization: Bearer ...` |
+| `anthropic` (native) | `ANTHROPIC_BASE_URL` (default `https://api.anthropic.com`) | `ANTHROPIC_API_KEY` | `x-api-key` |
+| `anthropic` (proxy) | `ANTHROPIC_BASE_URL` | `ANTHROPIC_AUTH_TOKEN` | `Authorization: Bearer ...` |
+
+Дополнительно: `ANTHROPIC_VERSION` переопределяет заголовок `anthropic-version`
+(default `2023-06-01`).
+
+Если в YAML задан `agents.<agent>.model.api_key_env: ANTHROPIC_AUTH_TOKEN` —
+клиент автоматически переключится в Bearer-режим (для OpenRouter / LiteLLM /
+внутренних gateway-ев).
+
+```bash
+# Пример: Claude через прокси, совместимый с Anthropic Messages API.
+export ANTHROPIC_BASE_URL=https://your-proxy.example.com
+export ANTHROPIC_AUTH_TOKEN=sk-proxy-xyz
+./llmscan scan ./code --provider anthropic --model claude-3-5-sonnet-latest
+```
+
 ---
 
 ## Быстрый старт
