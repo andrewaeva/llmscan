@@ -10,7 +10,9 @@ import (
 
 	"github.com/andrewaeva/llmscan/internal/baseline"
 	"github.com/andrewaeva/llmscan/internal/cache"
+	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
+	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/reach"
 	"github.com/andrewaeva/llmscan/internal/suppress"
@@ -62,6 +64,23 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		taintTraces = taint.Analyze(astList)
 		e.logf("taint: %d files analyzed", len(taintTraces))
 	}
+
+	// 3a) Inter-procedural taint (call-graph + function summaries + IFDS-light).
+	var (
+		cg             *callgraph.CallGraph
+		entryPoints    []entrypoints.Info
+		interProcPaths []taint.TaintPath
+		reachableFiles map[string]bool
+	)
+	if e.Cfg.Precision.Taint && e.Cfg.Precision.InterProc {
+		cg = callgraph.Build(astList, graph)
+		entryPoints = entrypoints.Detect(astList)
+		interProcPaths = taint.AnalyzeInterProc(astList, cg, graph, entryPoints,
+			taint.Options{MaxDepth: e.Cfg.Precision.InterProcMaxDepth})
+		reachableFiles = reachableFileSet(cg, entryPoints)
+		e.logf("interproc: %d entrypoints, %d nodes, %d edges, %d taint paths",
+			len(entryPoints), len(cg.Nodes), len(cg.Edges()), len(interProcPaths))
+	}
 	var expander *symexpand.Expander
 	if e.Cfg.Precision.SymbolExpansion {
 		expander = symexpand.New(astList)
@@ -101,13 +120,14 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	// 7) Assemble DAG.
 	enabledScanners := e.enabledScanners(plan, skillByName, files)
 	sc := scanContext{
-		chunks:        chunks,
-		contentByPath: map[string]string{},
-		index:         index,
-		expander:      expander,
-		taintTraces:   taintTraces,
-		deps:          graph.AsFileMap(),
-		suppress:      suppressions,
+		chunks:         chunks,
+		contentByPath:  map[string]string{},
+		index:          index,
+		expander:       expander,
+		taintTraces:    taintTraces,
+		interProcPaths: interProcPaths,
+		deps:           graph.AsFileMap(),
+		suppress:       suppressions,
 	}
 	for _, f := range prioritized {
 		sc.contentByPath[f.Path] = f.Content
@@ -135,11 +155,16 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	final = append(final, prefilterFindings...)
 	e.applySuppressions(final, suppressions)
 	if e.Cfg.Precision.Reachability {
-		if down := reach.Build(astList, graph.CallersByFile()).Apply(final); down > 0 {
+		idx := reach.Build(astList, graph.CallersByFile())
+		if reachableFiles != nil {
+			idx.SetCallGraphReachable(reachableFiles)
+		}
+		if down := idx.Apply(final); down > 0 {
 			e.logf("reachability: downgraded %d findings", down)
 		}
 	}
 	attachTraces(final, taintTraces)
+	attachInterProc(final, interProcPaths)
 	// Optional sub-agent deep pass runs BEFORE dropByPolicy so that findings
 	// the deep agent refutes are filtered out via the standard FP path.
 	final = e.runDeepPass(ctx, target, cdb, final)
@@ -330,6 +355,74 @@ func dedupAndCount(in []types.Finding) []types.Finding {
 		out = append(out, f)
 	}
 	return out
+}
+
+// reachableFileSet collects the set of files containing any node reachable
+// from the union of all entry points.
+func reachableFileSet(cg *callgraph.CallGraph, eps []entrypoints.Info) map[string]bool {
+	if cg == nil || len(eps) == 0 {
+		return nil
+	}
+	ids := make([]callgraph.NodeID, 0, len(eps))
+	for _, e := range eps {
+		ids = append(ids, e.Node)
+	}
+	rs := cg.ReachableFromAny(ids)
+	out := map[string]bool{}
+	for id := range rs {
+		if n := cg.Nodes[id]; n != nil {
+			out[n.File] = true
+		}
+	}
+	return out
+}
+
+// attachInterProc attaches matching inter-procedural TaintPath info to findings.
+// When a path's sink line is near a finding's span, the finding gets the path's
+// Hops as Trace, the interproc-taint tag, and a small confidence bump.
+func attachInterProc(final []types.Finding, paths []taint.TaintPath) {
+	if len(paths) == 0 {
+		return
+	}
+	for i := range final {
+		f := &final[i]
+		if tp := taint.MatchPath(paths, f.File, f.StartLine, f.EndLine); tp != nil {
+			// Only overwrite trace if the interproc path is longer than what's
+			// already attached (more context wins).
+			if len(tp.Hops) > len(f.Trace) {
+				f.Trace = tp.AsTrace()
+			}
+			f.Tags = appendUnique(f.Tags, "interproc-taint")
+			if len(tp.Sanitizers) > 0 {
+				f.Tags = appendUnique(f.Tags, "interproc-sanitized")
+				if f.Sanitizer == "" {
+					f.Sanitizer = tp.Sanitizers[0].Match
+				}
+			}
+			// Confidence bump for cross-function chains; bounded at 0.99.
+			if f.Score > 0 {
+				f.Score = minFloat(0.99, f.Score+0.05)
+			} else {
+				f.Score = tp.Confidence
+			}
+		}
+	}
+}
+
+func appendUnique(in []string, v string) []string {
+	for _, s := range in {
+		if s == v {
+			return in
+		}
+	}
+	return append(in, v)
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func matchTrace(traces []taint.Trace, line, endLine int) *taint.Trace {

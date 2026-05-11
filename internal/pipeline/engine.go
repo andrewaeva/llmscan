@@ -37,13 +37,14 @@ func New(cfg config.Config) *Engine {
 
 // scanContext aggregates per-scan data the DAG nodes need.
 type scanContext struct {
-	chunks        []types.FileTarget
-	contentByPath map[string]string
-	index         *rag.Index
-	expander      *symexpand.Expander
-	taintTraces   map[string][]taint.Trace
-	deps          map[string][]string
-	suppress      []suppress.Suppression
+	chunks         []types.FileTarget
+	contentByPath  map[string]string
+	index          *rag.Index
+	expander       *symexpand.Expander
+	taintTraces    map[string][]taint.Trace
+	interProcPaths []taint.TaintPath
+	deps           map[string][]string
+	suppress       []suppress.Suppression
 }
 
 func (e *Engine) logf(format string, args ...any) {

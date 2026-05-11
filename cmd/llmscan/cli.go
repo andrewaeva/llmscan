@@ -202,6 +202,12 @@ func applyPrecisionOverrides(cfg *config.Config, f *scanFlags) {
 	if f.noSecretsPF {
 		cfg.Precision.SecretsPreFilter = false
 	}
+	if f.noInterproc {
+		cfg.Precision.InterProc = false
+	}
+	if f.interprocMaxDepth > 0 {
+		cfg.Precision.InterProcMaxDepth = f.interprocMaxDepth
+	}
 	if f.minScore > 0 {
 		cfg.Precision.MinScore = f.minScore
 	}

@@ -77,6 +77,12 @@ type PrecisionConfig struct {
 	JSONRetries int `yaml:"json_retries,omitempty"`
 	// SecretsPreFilter enables regex+entropy secret detector before LLM.
 	SecretsPreFilter bool `yaml:"secrets_pre_filter"`
+
+	// InterProc enables inter-procedural cross-file taint analysis (call graph
+	// + function summaries + IFDS-light fixed-point). Disable with --no-interproc.
+	InterProc bool `yaml:"interproc"`
+	// InterProcMaxDepth caps TaintPath length (default 6 when zero).
+	InterProcMaxDepth int `yaml:"interproc_max_depth,omitempty"`
 }
 
 // DiffConfig configures incremental scanning.
@@ -198,6 +204,8 @@ func Default() Config {
 			MinScore:           0.0,
 			JSONRetries:        2,
 			SecretsPreFilter:   true,
+			InterProc:          true,
+			InterProcMaxDepth:  6,
 		},
 		Cache: CacheConfig{
 			Enabled: true,

@@ -20,6 +20,21 @@ import (
 type Index struct {
 	callersByFile map[string]int // 0 means likely unreachable
 	testFiles     map[string]bool
+	// cgReachable is the union of files reachable from detected entry points
+	// via the inter-procedural call graph. When nil the index falls back to
+	// the legacy "0 incoming imports" heuristic.
+	cgReachable map[string]bool
+}
+
+// SetCallGraphReachable installs the set of files known to be reachable from
+// detected entry points (HTTP/CLI/RPC/...) via the project's call graph.
+// When set, files NOT in the map are downgraded by Apply unless they look
+// like entry points themselves.
+func (idx *Index) SetCallGraphReachable(reach map[string]bool) {
+	if idx == nil {
+		return
+	}
+	idx.cgReachable = reach
 }
 
 // Build creates an index from parsed ASTs and the file->[]callers map.
@@ -54,6 +69,11 @@ func (idx *Index) Apply(findings []types.Finding) int {
 		if idx.testFiles[f.File] {
 			downgrade = true
 			reason = "test fixture file"
+		} else if idx.cgReachable != nil {
+			if !idx.cgReachable[f.File] && !looksLikeEntrypoint(f.File) {
+				downgrade = true
+				reason = "unreachable from any entry point (call-graph)"
+			}
 		} else if idx.callersByFile[f.File] == 0 && !looksLikeEntrypoint(f.File) {
 			downgrade = true
 			reason = "no incoming calls (likely dead module)"

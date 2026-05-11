@@ -10,10 +10,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	myast "github.com/andrewaeva/llmscan/internal/ast"
+	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/config"
+	"github.com/andrewaeva/llmscan/internal/depgraph"
 	"github.com/andrewaeva/llmscan/internal/pipeline"
 	"github.com/andrewaeva/llmscan/internal/report"
 	"github.com/andrewaeva/llmscan/internal/types"
+	"github.com/andrewaeva/llmscan/internal/util"
 )
 
 // scanFlags groups CLI flags for the scan command (kept compact to avoid 20-arg functions).
@@ -39,6 +43,11 @@ type scanFlags struct {
 	cachePath                                    string
 	noCache                                      bool
 	color                                        string
+
+	// inter-procedural taint
+	noInterproc       bool
+	interprocMaxDepth int
+	showCallGraph     bool
 
 	// --deep sub-agent verification pass.
 	deep                                  bool
@@ -69,6 +78,9 @@ func runScan(target string, f *scanFlags) error {
 		return err
 	}
 	applyFlagOverrides(&cfg, f)
+	if f.showCallGraph {
+		return runShowCallGraph(target, cfg)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -96,6 +108,30 @@ func runScan(target string, f *scanFlags) error {
 		cancel()
 		os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
 	}
+	return nil
+}
+
+// runShowCallGraph parses the target, builds the call graph, and prints it as
+// DOT to stdout. Used by the --show-callgraph debug flag.
+func runShowCallGraph(target string, cfg config.Config) error {
+	files, err := util.Walk(target, cfg.Scan.Include, cfg.Scan.Exclude, cfg.Scan.MaxFileBytes, cfg.Scan.FollowSymlinks)
+	if err != nil {
+		return fmt.Errorf("walk: %w", err)
+	}
+	var astList []*myast.FileAST
+	for _, f := range files {
+		if myast.Detect(f.Path) == myast.LangUnknown {
+			continue
+		}
+		a, perr := myast.Parse(context.Background(), f.Path, []byte(f.Content))
+		if perr != nil {
+			continue
+		}
+		astList = append(astList, a)
+	}
+	graph := depgraph.New(target, astList)
+	cg := callgraph.Build(astList, graph)
+	fmt.Print(cg.DOT())
 	return nil
 }
 
@@ -141,6 +177,9 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().BoolVar(&f.noTaint, "no-taint", false, "Disable taint analysis (source -> sanitizer -> sink chains)")
 	cmd.Flags().BoolVar(&f.noReach, "no-reachability", false, "Disable reachability downgrade (test/dead code)")
 	cmd.Flags().BoolVar(&f.noSecretsPF, "no-secrets-prefilter", false, "Disable regex+entropy secrets pre-filter")
+	cmd.Flags().BoolVar(&f.noInterproc, "no-interproc", false, "Disable inter-procedural cross-file taint (fall back to intra-file taint only)")
+	cmd.Flags().IntVar(&f.interprocMaxDepth, "interproc-max-depth", 0, "Max hops for inter-procedural taint paths (default 6)")
+	cmd.Flags().BoolVar(&f.showCallGraph, "show-callgraph", false, "Print the inter-procedural call graph as DOT and exit (debug)")
 	cmd.Flags().Float64Var(&f.minScore, "min-score", 0.0, "Drop findings with Score below threshold (0..1)")
 	cmd.Flags().IntVar(&f.voteN, "vote-n", 0, "Self-consistency voting: run scanners N times (0 disables)")
 	cmd.Flags().IntVar(&f.voteK, "vote-k", 0, "Self-consistency voting: keep findings present in K of N runs (default ceil(N/2))")
