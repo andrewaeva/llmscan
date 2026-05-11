@@ -31,9 +31,9 @@ const (
 type Skill struct {
 	// frontmatter
 	Name        string    `yaml:"name"`
-	Kind        SkillKind `yaml:"kind"`             // scanner | orchestrator | ...
+	Kind        SkillKind `yaml:"kind"` // scanner | orchestrator | ...
 	Description string    `yaml:"description"`
-	Layer       int       `yaml:"layer,omitempty"`  // hint for DAG layering (lower = earlier)
+	Layer       int       `yaml:"layer,omitempty"` // hint for DAG layering (lower = earlier)
 	DependsOn   []string  `yaml:"depends_on,omitempty"`
 	Languages   []string  `yaml:"languages,omitempty"` // empty = any
 	CWE         []string  `yaml:"cwe,omitempty"`

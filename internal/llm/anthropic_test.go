@@ -8,13 +8,13 @@ import (
 
 func TestAnthropicAuthResolution(t *testing.T) {
 	cases := []struct {
-		name      string
-		env       map[string]string
-		specEnv   string
-		specURL   string
-		wantBase  string
+		name       string
+		env        map[string]string
+		specEnv    string
+		specURL    string
+		wantBase   string
 		wantBearer bool
-		wantErr   bool
+		wantErr    bool
 	}{
 		{
 			name:     "native ANTHROPIC_API_KEY",

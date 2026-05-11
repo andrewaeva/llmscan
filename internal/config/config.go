@@ -33,22 +33,22 @@ type ScanConfig struct {
 	MaxFileBytes   int      `yaml:"max_file_bytes,omitempty"`
 	ChunkLines     int      `yaml:"chunk_lines,omitempty"`
 	ChunkOverlap   int      `yaml:"chunk_overlap,omitempty"`
-	Concurrency    int      `yaml:"concurrency,omitempty"`       // chunks in flight per single scanner agent
-	AgentParallel  int      `yaml:"agent_parallel,omitempty"`     // scanner agents in flight (DAG layer)
+	Concurrency    int      `yaml:"concurrency,omitempty"`    // chunks in flight per single scanner agent
+	AgentParallel  int      `yaml:"agent_parallel,omitempty"` // scanner agents in flight (DAG layer)
 	FollowSymlinks bool     `yaml:"follow_symlinks,omitempty"`
 }
 
 // RAGConfig controls the in-memory retrieval index.
 type RAGConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	Provider      string `yaml:"provider,omitempty"`        // openai | opencode | voyage
-	Model         string `yaml:"model,omitempty"`           // embedding model
-	BaseURL       string `yaml:"base_url,omitempty"`
-	APIKeyEnv     string `yaml:"api_key_env,omitempty"`
-	TopK          int    `yaml:"top_k,omitempty"`           // candidates per scanner chunk
-	FilterKeep    int    `yaml:"filter_keep,omitempty"`     // after context-filter
-	ChunkLines    int    `yaml:"chunk_lines,omitempty"`     // sliding-window fallback size
-	BatchSize     int    `yaml:"batch_size,omitempty"`
+	Enabled    bool   `yaml:"enabled"`
+	Provider   string `yaml:"provider,omitempty"` // openai | opencode | voyage
+	Model      string `yaml:"model,omitempty"`    // embedding model
+	BaseURL    string `yaml:"base_url,omitempty"`
+	APIKeyEnv  string `yaml:"api_key_env,omitempty"`
+	TopK       int    `yaml:"top_k,omitempty"`       // candidates per scanner chunk
+	FilterKeep int    `yaml:"filter_keep,omitempty"` // after context-filter
+	ChunkLines int    `yaml:"chunk_lines,omitempty"` // sliding-window fallback size
+	BatchSize  int    `yaml:"batch_size,omitempty"`
 }
 
 // SkillsConfig points to one or more directories with SKILL.md files.
@@ -81,8 +81,8 @@ type PrecisionConfig struct {
 
 // DiffConfig configures incremental scanning.
 type DiffConfig struct {
-	Range    string `yaml:"range,omitempty"`
-	IncludeRevDeps bool `yaml:"include_rev_deps,omitempty"`
+	Range          string `yaml:"range,omitempty"`
+	IncludeRevDeps bool   `yaml:"include_rev_deps,omitempty"`
 }
 
 // CacheConfig points to the sqlite cache file.
@@ -104,13 +104,13 @@ type BaselineConfig struct {
 // against findings at or above MinSeverity, capped at MaxHotspots.
 type DeepConfig struct {
 	Enabled      bool   `yaml:"enabled,omitempty"`
-	MinSeverity  string `yaml:"min_severity,omitempty"`  // critical | high | medium
-	MaxHotspots  int    `yaml:"max_hotspots,omitempty"`  // hard cap; default 20
-	Budget       int    `yaml:"budget,omitempty"`        // max tool calls per hotspot; default 40
-	Concurrency  int    `yaml:"concurrency,omitempty"`   // parallel sub-agents; default 4
-	Cache        bool   `yaml:"cache,omitempty"`         // cache tool outputs in sqlite; default true
-	Model        string `yaml:"model,omitempty"`         // override LLM model id (empty = use default)
-	Provider     string `yaml:"provider,omitempty"`      // override provider (empty = use default)
+	MinSeverity  string `yaml:"min_severity,omitempty"`   // critical | high | medium
+	MaxHotspots  int    `yaml:"max_hotspots,omitempty"`   // hard cap; default 20
+	Budget       int    `yaml:"budget,omitempty"`         // max tool calls per hotspot; default 40
+	Concurrency  int    `yaml:"concurrency,omitempty"`    // parallel sub-agents; default 4
+	Cache        bool   `yaml:"cache,omitempty"`          // cache tool outputs in sqlite; default true
+	Model        string `yaml:"model,omitempty"`          // override LLM model id (empty = use default)
+	Provider     string `yaml:"provider,omitempty"`       // override provider (empty = use default)
 	MaxFileBytes int    `yaml:"max_file_bytes,omitempty"` // sandbox guard; default 512 KiB
 }
 
@@ -151,7 +151,7 @@ const (
 // Default returns a sensible baseline configuration.
 func Default() Config {
 	return Config{
-		DefaultModel: ModelSpec{
+		DefaultModel: ModelSpec{ //nolint:gosec // APIKeyEnv holds the env var *name*, not a credential
 			Provider:    "anthropic",
 			Model:       "claude-sonnet-4-6",
 			Temperature: 0.1,
@@ -159,12 +159,12 @@ func Default() Config {
 			APIKeyEnv:   "ANTHROPIC_API_KEY",
 		},
 		Agents: map[string]AgentConfig{
-			"orchestrator":    {Enabled: true},
-			"injection":       {Enabled: true},
-			"secrets":         {Enabled: true},
-			"auth":            {Enabled: true},
-			"crypto":          {Enabled: true},
-			"deserialization": {Enabled: true},
+			"orchestrator":      {Enabled: true},
+			"injection":         {Enabled: true},
+			"secrets":           {Enabled: true},
+			"auth":              {Enabled: true},
+			"crypto":            {Enabled: true},
+			"deserialization":   {Enabled: true},
 			"ssrf":              {Enabled: true},
 			"generic":           {Enabled: true},
 			"insecure-defaults": {Enabled: true},
@@ -173,8 +173,8 @@ func Default() Config {
 			"supply-chain":      {Enabled: true},
 			"memory-safety":     {Enabled: true},
 			"context_filter":    {Enabled: true},
-			"verifier":        {Enabled: true},
-			"fp_filter":       {Enabled: true},
+			"verifier":          {Enabled: true},
+			"fp_filter":         {Enabled: true},
 		},
 		RAG: RAGConfig{
 			Enabled:    false, // off by default; embeddings cost money
@@ -183,7 +183,7 @@ func Default() Config {
 			ChunkLines: 120,
 			BatchSize:  64,
 		},
-		Skills: SkillsConfig{},
+		Skills:                      SkillsConfig{},
 		VerifierConfidenceThreshold: ConfLow,
 		DropFalsePositives:          true,
 		Precision: PrecisionConfig{

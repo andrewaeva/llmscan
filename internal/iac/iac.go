@@ -23,6 +23,8 @@ const (
 )
 
 // Detect returns the IaC kind for a path or empty if not IaC.
+//
+//nolint:gocyclo // dispatch over IaC kinds; each branch is trivial
 func Detect(path, content string) Kind {
 	base := strings.ToLower(filepath.Base(path))
 	ext := strings.ToLower(filepath.Ext(path))

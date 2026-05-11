@@ -11,9 +11,9 @@ import (
 
 // Options controls chunking.
 type Options struct {
-	MaxLines      int // soft cap per chunk
-	OverlapLines  int // lines of overlap between sliding windows
-	MapReduceLOC  int // files >= this LOC are split into chunks + a summary chunk
+	MaxLines     int // soft cap per chunk
+	OverlapLines int // lines of overlap between sliding windows
+	MapReduceLOC int // files >= this LOC are split into chunks + a summary chunk
 }
 
 // Default returns reasonable defaults.

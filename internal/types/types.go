@@ -43,14 +43,14 @@ type Finding struct {
 	Agent string `json:"agent"`
 
 	// Verification metadata. Populated by the Verifier agent.
-	Verified         bool   `json:"verified"`
-	VerifierVerdict  string `json:"verifier_verdict,omitempty"`
-	VerifierComment  string `json:"verifier_comment,omitempty"`
-	VerifierModel    string `json:"verifier_model,omitempty"`
-	FalsePositive    bool   `json:"false_positive"`
-	FPReason         string `json:"fp_reason,omitempty"`
-	SuggestedFix     string `json:"suggested_fix,omitempty"`
-	References       []string `json:"references,omitempty"`
+	Verified        bool     `json:"verified"`
+	VerifierVerdict string   `json:"verifier_verdict,omitempty"`
+	VerifierComment string   `json:"verifier_comment,omitempty"`
+	VerifierModel   string   `json:"verifier_model,omitempty"`
+	FalsePositive   bool     `json:"false_positive"`
+	FPReason        string   `json:"fp_reason,omitempty"`
+	SuggestedFix    string   `json:"suggested_fix,omitempty"`
+	References      []string `json:"references,omitempty"`
 
 	// Numeric confidence in [0,1] (preferred over Confidence enum when present).
 	Score float64 `json:"score,omitempty"`
@@ -88,8 +88,8 @@ type Finding struct {
 type DeepToolCall struct {
 	Step   int    `json:"step"`
 	Tool   string `json:"tool"`
-	Args   string `json:"args"`              // compact JSON
-	Result string `json:"result,omitempty"`  // truncated to ~512 chars
+	Args   string `json:"args"`             // compact JSON
+	Result string `json:"result,omitempty"` // truncated to ~512 chars
 	Error  string `json:"error,omitempty"`
 	Ms     int64  `json:"ms"`
 }
@@ -117,10 +117,10 @@ type FileTarget struct {
 
 // ScanPlan is produced by the Orchestrator.
 type ScanPlan struct {
-	Reasoning  string   `json:"reasoning"`
-	Priority   []string `json:"priority"`    // ordered file paths
-	Focus      []string `json:"focus"`       // suspected vulnerability classes
-	SkipGlobs  []string `json:"skip_globs"`  // patterns to skip (tests, vendor, ...)
+	Reasoning  string              `json:"reasoning"`
+	Priority   []string            `json:"priority"`              // ordered file paths
+	Focus      []string            `json:"focus"`                 // suspected vulnerability classes
+	SkipGlobs  []string            `json:"skip_globs"`            // patterns to skip (tests, vendor, ...)
 	AgentHints map[string][]string `json:"agent_hints,omitempty"` // agent -> file paths
 }
 

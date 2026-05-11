@@ -5,10 +5,10 @@
 //
 // Tools provided:
 //
-//   read_file(path, start_line, end_line) -> {content, lines, total_lines}
-//   grep(pattern, path_glob, max_matches)  -> {matches:[{file,line,text}]}
-//   list_dir(path)                          -> {entries:[{name,type}]}
-//   git_blame(path, line)                   -> {commit, author, date, summary}
+//	read_file(path, start_line, end_line) -> {content, lines, total_lines}
+//	grep(pattern, path_glob, max_matches)  -> {matches:[{file,line,text}]}
+//	list_dir(path)                          -> {entries:[{name,type}]}
+//	git_blame(path, line)                   -> {commit, author, date, summary}
 //
 // All output is size-limited so a runaway agent cannot blow the context window.
 package tools
@@ -105,13 +105,13 @@ func (s *Sandbox) ReadFile(path string, start, end int) (string, error) {
 	if st.IsDir() {
 		return "", fmt.Errorf("is a directory: %s", path)
 	}
-	max := s.MaxFileBytes
-	if max <= 0 {
-		max = defaultMaxFileBytes
+	maxBytes := s.MaxFileBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxFileBytes
 	}
-	if st.Size() > int64(max)*4 {
+	if st.Size() > int64(maxBytes)*4 {
 		// Don't even open enormous files.
-		return "", fmt.Errorf("file too large (%d bytes, cap %d)", st.Size(), max*4)
+		return "", fmt.Errorf("file too large (%d bytes, cap %d)", st.Size(), maxBytes*4)
 	}
 	raw, err := os.ReadFile(abs)
 	if err != nil {
@@ -135,8 +135,8 @@ func (s *Sandbox) ReadFile(path string, start, end int) (string, error) {
 	fmt.Fprintf(&buf, "// %s (lines %d-%d of %d)\n", path, start, end, total)
 	for i := start - 1; i < end && i < len(lines); i++ {
 		fmt.Fprintf(&buf, "%5d  %s\n", i+1, lines[i])
-		if buf.Len() > max {
-			fmt.Fprintf(&buf, "...[truncated at %d bytes]\n", max)
+		if buf.Len() > maxBytes {
+			fmt.Fprintf(&buf, "...[truncated at %d bytes]\n", maxBytes)
 			break
 		}
 	}
@@ -145,6 +145,8 @@ func (s *Sandbox) ReadFile(path string, start, end int) (string, error) {
 
 // Grep returns up to maxMatches `pattern` hits inside files matching
 // pathGlob (relative to root). pathGlob "" means the whole sandbox.
+//
+//nolint:gocyclo // recursive search with multiple filters and skip rules
 func (s *Sandbox) Grep(pattern, pathGlob string, maxMatches int) (string, error) {
 	if pattern == "" {
 		return "", errors.New("empty pattern")
@@ -159,7 +161,7 @@ func (s *Sandbox) Grep(pattern, pathGlob string, maxMatches int) (string, error)
 
 	// Determine candidate file set.
 	var candidates []string
-	switch {
+	switch { //nolint:staticcheck // QF1002: multi-value alternative branches aren't a tagged switch
 	case pathGlob == "" || pathGlob == "**" || pathGlob == ".":
 		_ = filepath.WalkDir(s.Root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -288,7 +290,7 @@ func (s *Sandbox) GitBlame(path string, line int) (string, error) {
 	rel, _ := filepath.Rel(s.Root, abs)
 	ctx, cancel := contextWithTimeout(5 * time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", rel)
+	cmd := exec.CommandContext(ctx, "git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", rel) //nolint:gosec // rel is resolved inside sandbox Root
 	cmd.Dir = s.Root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

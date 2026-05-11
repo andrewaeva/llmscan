@@ -55,6 +55,7 @@ func Link(traces map[string][]Trace, deps map[string][]string) map[string][]Trac
 // assignRE captures lhs = rhs patterns across languages.
 var assignRE = regexp.MustCompile(`^\s*(?:[A-Za-z_][\w.]*\s*[,]?\s*)*([A-Za-z_]\w*)\s*[:=]=?\s*(.+)$`)
 
+//nolint:gocyclo // taint tracking across many source/sink/sanitizer patterns
 func analyzeFile(path, lang, src string) []Trace {
 	lines := strings.Split(src, "\n")
 	type taintedVar struct {

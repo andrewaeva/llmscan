@@ -4,7 +4,7 @@
 //   - "openai":    OpenAI-compatible Chat Completions (also for any OpenAI-compatible endpoint).
 //   - "opencode":  OpenAI-compatible OpenCode endpoint.
 //   - "anthropic": Anthropic Messages API (or any compatible proxy via
-//                  ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN).
+//     ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN).
 //
 // The package intentionally avoids external SDKs to keep dependencies minimal.
 package llm
@@ -36,15 +36,16 @@ func logEndpointOnce(provider, model, baseURL, defaultBaseURL, authEnv string, e
 	if baseURL != "" && baseURL != defaultBaseURL {
 		mode = "proxy"
 	}
-	fields := []string{
-		"provider=" + provider,
-		"model=" + model,
-		"base_url=" + baseURL,
-		"mode=" + mode,
-		"auth_env=" + authEnv,
-	}
+	fields := make([]string, 0, 5+len(extra))
+	fields = append(fields,
+		"provider="+provider,
+		"model="+model,
+		"base_url="+baseURL,
+		"mode="+mode,
+		"auth_env="+authEnv,
+	)
 	fields = append(fields, extra...)
-	log.Printf("[llm] %s", strings.Join(fields, " "))
+	log.Printf("[llm] %s", strings.Join(fields, " ")) //nolint:gosec // fields are static config keys, not user input
 }
 
 // Message is a single chat message.

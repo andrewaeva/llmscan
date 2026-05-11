@@ -117,7 +117,7 @@ func TestRankOrdering(t *testing.T) {
 	r1 := rank(types.SevCritical, types.ConfHigh)
 	r2 := rank(types.SevHigh, types.ConfHigh)
 	r3 := rank(types.SevHigh, types.ConfLow)
-	if !(r1 > r2 && r2 > r3) {
+	if r1 <= r2 || r2 <= r3 {
 		t.Errorf("rank order broken: %d %d %d", r1, r2, r3)
 	}
 }

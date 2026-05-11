@@ -82,16 +82,14 @@ func (p palette) wrap(code, s string) string {
 	return code + s + ansiReset
 }
 
-func (p palette) bold(s string) string      { return p.wrap(ansiBold, s) }
-func (p palette) dim(s string) string       { return p.wrap(ansiDim, s) }
-func (p palette) italic(s string) string    { return p.wrap(ansiItalic, s) }
-func (p palette) red(s string) string       { return p.wrap(ansiRed, s) }
-func (p palette) green(s string) string     { return p.wrap(ansiGreen, s) }
-func (p palette) yellow(s string) string    { return p.wrap(ansiYellow, s) }
-func (p palette) blue(s string) string      { return p.wrap(ansiBlue, s) }
-func (p palette) magenta(s string) string   { return p.wrap(ansiMagenta, s) }
-func (p palette) cyan(s string) string      { return p.wrap(ansiCyan, s) }
-func (p palette) gray(s string) string      { return p.wrap(ansiGray, s) }
+func (p palette) bold(s string) string    { return p.wrap(ansiBold, s) }
+func (p palette) dim(s string) string     { return p.wrap(ansiDim, s) }
+func (p palette) red(s string) string     { return p.wrap(ansiRed, s) }
+func (p palette) green(s string) string   { return p.wrap(ansiGreen, s) }
+func (p palette) yellow(s string) string  { return p.wrap(ansiYellow, s) }
+func (p palette) magenta(s string) string { return p.wrap(ansiMagenta, s) }
+func (p palette) cyan(s string) string    { return p.wrap(ansiCyan, s) }
+func (p palette) gray(s string) string    { return p.wrap(ansiGray, s) }
 
 // sevBadge renders "[ CRITICAL ]" / "[ HIGH ]" / ... with severity-appropriate
 // coloring. For critical it uses a red background to stand out.
@@ -122,15 +120,15 @@ func (p palette) sevBadge(s types.Severity) string {
 // confColor colors confidence text by level (high=green, medium=yellow, low=gray).
 func (p palette) confColor(c string) string {
 	if !p.on {
-		return string(c)
+		return c
 	}
-	switch strings.ToLower(string(c)) {
+	switch strings.ToLower(c) {
 	case "high":
-		return p.green(string(c))
+		return p.green(c)
 	case "medium":
-		return p.yellow(string(c))
+		return p.yellow(c)
 	case "low":
-		return p.gray(string(c))
+		return p.gray(c)
 	}
-	return string(c)
+	return c
 }

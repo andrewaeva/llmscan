@@ -255,7 +255,7 @@ func (c *anthropicClient) CompleteWithTools(ctx context.Context, req ToolRequest
 
 	tools := make([]antToolDef, 0, len(req.Tools))
 	for _, t := range req.Tools {
-		tools = append(tools, antToolDef{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
+		tools = append(tools, antToolDef(t))
 	}
 
 	// Seed message history with the caller's messages (skipping any "system"

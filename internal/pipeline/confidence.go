@@ -26,6 +26,8 @@ import (
 // A test/dead-code reachability downgrade lowers by one level, but never
 // below medium when both verifier and deep agree, and never below the
 // taint/secrets floor.
+//
+//nolint:gocyclo // multi-signal confidence resolution; flat by design
 func resolveConfidence(f types.Finding) types.Confidence {
 	// 1) Start from whatever scanner/verifier already produced.
 	cur := normConf(f.Confidence)

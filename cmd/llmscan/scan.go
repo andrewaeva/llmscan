@@ -41,11 +41,11 @@ type scanFlags struct {
 	color                                        string
 
 	// --deep sub-agent verification pass.
-	deep                                   bool
-	deepSeverity                           string
-	deepMaxHotspots, deepBudget, deepConc  int
-	deepModel, deepProvider                string
-	deepNoCache                            bool
+	deep                                  bool
+	deepSeverity                          string
+	deepMaxHotspots, deepBudget, deepConc int
+	deepModel, deepProvider               string
+	deepNoCache                           bool
 }
 
 func scanCmd() *cobra.Command {
@@ -84,13 +84,17 @@ func runScan(target string, f *scanFlags) error {
 	if err != nil {
 		return err
 	}
-	defer closeOut()
 
 	if err := writeReport(out, rep, f.format, f.color); err != nil {
+		_ = closeOut()
 		return err
 	}
+	if cerr := closeOut(); cerr != nil {
+		return cerr
+	}
 	if f.failOn != "" && shouldFail(rep, f.failOn) {
-		os.Exit(2)
+		cancel()
+		os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
 	}
 	return nil
 }

@@ -9,12 +9,12 @@ import (
 
 func TestExtractJSON(t *testing.T) {
 	cases := map[string]string{
-		`{"a":1}`:                                         `{"a":1}`,
-		"```json\n{\"a\":1}\n```":                         `{"a":1}`,
-		"```\n{\"x\":\"y\"}\n```":                         `{"x":"y"}`,
-		"prefix text {\"a\":1} trailing":                  `{"a":1}`,
-		"  \n```json\n{\"k\":\"v\",\"n\":2}\n```\n":       `{"k":"v","n":2}`,
-		`no braces here`:                                  `no braces here`,
+		`{"a":1}`:                                   `{"a":1}`,
+		"```json\n{\"a\":1}\n```":                   `{"a":1}`,
+		"```\n{\"x\":\"y\"}\n```":                   `{"x":"y"}`,
+		"prefix text {\"a\":1} trailing":            `{"a":1}`,
+		"  \n```json\n{\"k\":\"v\",\"n\":2}\n```\n": `{"k":"v","n":2}`,
+		`no braces here`:                            `no braces here`,
 	}
 	for in, want := range cases {
 		got := ExtractJSON(in)

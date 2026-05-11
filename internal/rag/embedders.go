@@ -15,14 +15,16 @@ import (
 
 // EmbedderSpec describes how to build an embedder.
 type EmbedderSpec struct {
-	Provider  string `yaml:"provider"`             // openai | opencode | voyage
-	Model     string `yaml:"model"`                // e.g. text-embedding-3-small
-	BaseURL   string `yaml:"base_url,omitempty"`   // override endpoint
+	Provider  string `yaml:"provider"`           // openai | opencode | voyage
+	Model     string `yaml:"model"`              // e.g. text-embedding-3-small
+	BaseURL   string `yaml:"base_url,omitempty"` // override endpoint
 	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 }
 
 // NewEmbedder constructs the right embedder. Returns nil if Provider is empty
 // (callers treat nil as "RAG disabled / keyword-only").
+//
+//nolint:gocyclo // provider dispatch over many backends
 func NewEmbedder(spec EmbedderSpec) (Embedder, error) {
 	if spec.Provider == "" {
 		return nil, nil

@@ -122,7 +122,7 @@ func (e *Engine) applyWatchlistPreFilter(files []types.FileTarget, astByPath map
 
 // collectSuppressions extracts all // llmscan:ignore directives from source.
 func (e *Engine) collectSuppressions(files []types.FileTarget) []suppress.Suppression {
-	var all []suppress.Suppression
+	all := make([]suppress.Suppression, 0, len(files))
 	for _, f := range files {
 		all = append(all, suppress.Parse(f.Path, f.Content)...)
 	}

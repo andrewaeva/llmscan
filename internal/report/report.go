@@ -88,6 +88,7 @@ func WriteTextWith(w io.Writer, r types.Report, mode ColorMode) error {
 	return nil
 }
 
+//nolint:gocyclo // optional formatting branches per finding field
 func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 	fp := ""
 	if f.FalsePositive {
@@ -120,11 +121,11 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 	if f.VerifierComment != "" {
 		verdict := f.VerifierVerdict
 		vc := p.gray(verdict)
-		switch strings.ToLower(string(verdict)) {
+		switch strings.ToLower(verdict) {
 		case "true_positive", "tp", "confirmed":
-			vc = p.red(string(verdict))
+			vc = p.red(verdict)
 		case "false_positive", "fp":
-			vc = p.green(string(verdict))
+			vc = p.green(verdict)
 		}
 		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLine(f.VerifierComment), vc)
 	}
@@ -193,9 +194,9 @@ func WriteSARIF(w io.Writer, r types.Report) error {
 		} `json:"physicalLocation"`
 	}
 	type result struct {
-		RuleID    string `json:"ruleId"`
-		Level     string `json:"level"`
-		Message   struct {
+		RuleID  string `json:"ruleId"`
+		Level   string `json:"level"`
+		Message struct {
 			Text string `json:"text"`
 		} `json:"message"`
 		Locations []loc `json:"locations"`

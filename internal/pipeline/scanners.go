@@ -18,6 +18,8 @@ import (
 
 // runScanner runs one scanner agent over every chunk in parallel, optionally
 // enriching each prompt with RAG-retrieved + context-filtered context.
+//
+//nolint:gocyclo // per-chunk scan with multiple optional enrichments
 func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client, promptOverride string, chunks []types.FileTarget, index *rag.Index, cfilter *agents.ContextFilter, sc scanContext) []types.Finding {
 	scanner := &agents.Scanner{Name: name, Client: client, PromptOverride: promptOverride}
 	conc := e.Cfg.Scan.Concurrency

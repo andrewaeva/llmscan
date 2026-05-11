@@ -105,7 +105,7 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 		msgs = append(msgs, oaMessage{Role: "system", Content: req.System})
 	}
 	for _, m := range req.Messages {
-		msgs = append(msgs, oaMessage{Role: m.Role, Content: m.Content})
+		msgs = append(msgs, oaMessage(m))
 	}
 	body := oaRequest{
 		Model:       c.spec.Model,

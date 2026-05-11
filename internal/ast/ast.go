@@ -87,12 +87,12 @@ type Call struct {
 
 // FileAST is the result of parsing one file.
 type FileAST struct {
-	Path     string    `json:"path"`
-	Language Language  `json:"language"`
-	Imports  []Import  `json:"imports"`
-	Symbols  []Symbol  `json:"symbols"`
-	Calls    []Call    `json:"calls"`
-	LOC      int       `json:"loc"`
+	Path     string   `json:"path"`
+	Language Language `json:"language"`
+	Imports  []Import `json:"imports"`
+	Symbols  []Symbol `json:"symbols"`
+	Calls    []Call   `json:"calls"`
+	LOC      int      `json:"loc"`
 	root     *sitter.Node
 	source   []byte
 }

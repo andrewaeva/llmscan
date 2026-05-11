@@ -1,10 +1,10 @@
 // Package rag is an in-memory retrieval-augmented context store.
 //
 // Pipeline:
-//   1. Index() splits source files into symbol-aware chunks, computes embeddings,
-//      keeps everything in RAM (vectors + chunk metadata + raw text).
-//   2. Search(query, k) returns top-k chunks by cosine similarity.
-//   3. SearchByVector() is exposed for callers that already have an embedding.
+//  1. Index() splits source files into symbol-aware chunks, computes embeddings,
+//     keeps everything in RAM (vectors + chunk metadata + raw text).
+//  2. Search(query, k) returns top-k chunks by cosine similarity.
+//  3. SearchByVector() is exposed for callers that already have an embedding.
 //
 // No persistence. The index is built per scan.
 package rag
@@ -22,14 +22,14 @@ import (
 
 // Chunk is one indexed code fragment.
 type Chunk struct {
-	ID         string  `json:"id"`
-	File       string  `json:"file"`
-	StartLine  int     `json:"start_line"`
-	EndLine    int     `json:"end_line"`
-	Symbol     string  `json:"symbol,omitempty"`
-	SymbolKind string  `json:"symbol_kind,omitempty"`
-	Language   string  `json:"language"`
-	Text       string  `json:"text"`
+	ID         string `json:"id"`
+	File       string `json:"file"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
+	Symbol     string `json:"symbol,omitempty"`
+	SymbolKind string `json:"symbol_kind,omitempty"`
+	Language   string `json:"language"`
+	Text       string `json:"text"`
 	vec        []float32
 }
 

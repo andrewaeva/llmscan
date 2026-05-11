@@ -318,9 +318,7 @@ func TestSevBadgeUnknown(t *testing.T) {
 
 func TestOneLineTruncates(t *testing.T) {
 	long := strings.Repeat("ab cd ", 80)
-	if got := oneLine(long); len(got) <= 200 {
-		// expected: trimmed below ~243 chars total including marker
-	} else if !strings.HasSuffix(got, "...") {
+	if got := oneLine(long); len(got) > 200 && !strings.HasSuffix(got, "...") {
 		t.Errorf("expected trailing ellipsis on truncation; got %q", got[len(got)-5:])
 	}
 	if got := oneLine("a\nb\n  c"); got != "a b c" {

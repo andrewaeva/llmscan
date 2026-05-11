@@ -1,7 +1,7 @@
 // Package reach implements a simple dead-code / reachability heuristic:
-//  - files under test/, tests/, fixtures/, examples/_test.go are downgraded;
-//  - functions that no other file calls (zero fan-in via depgraph) are flagged;
-//  - findings inside dead branches (`if False`, `if (false)`, after `return`) are flagged.
+//   - files under test/, tests/, fixtures/, examples/_test.go are downgraded;
+//   - functions that no other file calls (zero fan-in via depgraph) are flagged;
+//   - findings inside dead branches (`if False`, `if (false)`, after `return`) are flagged.
 //
 // The package returns a filter function used by the pipeline to mark findings
 // as low-confidence rather than dropping them, so users can opt-in via

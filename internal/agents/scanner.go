@@ -58,8 +58,8 @@ func (s *Scanner) Scan(ctx context.Context, f types.FileTarget, extraContext str
 	for i, fnd := range parsed.Findings {
 		fnd.Agent = s.Name
 		fnd.File = f.Path
-		fnd.StartLine = fnd.StartLine + f.LineOffset
-		fnd.EndLine = fnd.EndLine + f.LineOffset
+		fnd.StartLine += f.LineOffset
+		fnd.EndLine += f.LineOffset
 		if fnd.ID == "" {
 			fnd.ID = fmt.Sprintf("%s-%s-%d-%d", s.Name, hash6(f.Path), fnd.StartLine, i)
 		}

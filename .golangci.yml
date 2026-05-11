@@ -1,0 +1,112 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocyclo
+    - gocritic
+    - gosec
+    - misspell
+    - unconvert
+    - unparam
+    - prealloc
+    - bodyclose
+    - noctx
+    - revive
+  settings:
+    gocyclo:
+      min-complexity: 15
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    gosec:
+      excludes:
+        - G115
+    gocritic:
+      disabled-checks:
+        - ifElseChain
+        - singleCaseSwitch
+        - commentFormatting
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gosec
+          - unparam
+          - errcheck
+          - prealloc
+      - path: examples/
+        linters:
+          - errcheck
+          - gosec
+          - gocyclo
+          - unused
+          - staticcheck
+          - gocritic
+          - revive
+          - ineffassign
+          - unparam
+          - prealloc
+      - path: internal/cache/
+        linters:
+          - noctx
+        text: "must not be called"
+      - path: internal/gitdiff/
+        linters:
+          - noctx
+      - path: cmd/llmscan/bench\.go
+        linters:
+          - noctx
+      - source: "defer .*\\.Close\\(\\)"
+        linters:
+          - errcheck
+    paths:
+      - examples/vuln_samples
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

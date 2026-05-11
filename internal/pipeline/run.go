@@ -21,6 +21,8 @@ import (
 )
 
 // Run executes the full pipeline on `target` (file or directory).
+//
+//nolint:gocyclo // sequential pipeline stages; flat is intentional
 func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	report := types.Report{
 		Target:    target,

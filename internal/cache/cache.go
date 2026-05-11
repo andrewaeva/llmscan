@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	// register the pure-Go SQLite driver under name "sqlite".
 	_ "modernc.org/sqlite"
 )
 
@@ -155,19 +156,19 @@ func (d *DB) SaveBaseline(items map[string]string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM baseline`); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT INTO baseline(fingerprint, finding_json, created_at) VALUES(?,?,?)`)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	now := time.Now().Unix()
 	for fp, payload := range items {
 		if _, err := stmt.Exec(fp, payload, now); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 	}

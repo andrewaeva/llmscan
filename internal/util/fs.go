@@ -11,36 +11,36 @@ import (
 
 // codeExtensions maps file extension -> coarse language label.
 var codeExtensions = map[string]string{
-	".go":   "go",
-	".py":   "python",
-	".js":   "javascript",
-	".jsx":  "javascript",
-	".ts":   "typescript",
-	".tsx":  "typescript",
-	".java": "java",
-	".kt":   "kotlin",
-	".rb":   "ruby",
-	".php":  "php",
-	".rs":   "rust",
-	".c":    "c",
-	".h":    "c",
-	".cc":   "cpp",
-	".cpp":  "cpp",
-	".hpp":  "cpp",
-	".cs":   "csharp",
-	".scala": "scala",
-	".swift": "swift",
-	".sh":   "shell",
-	".bash": "shell",
-	".zsh":  "shell",
-	".sql":  "sql",
-	".tf":   "terraform",
-	".yml":  "yaml",
-	".yaml": "yaml",
-	".json": "json",
-	".toml": "toml",
-	".xml":  "xml",
-	".html": "html",
+	".go":         "go",
+	".py":         "python",
+	".js":         "javascript",
+	".jsx":        "javascript",
+	".ts":         "typescript",
+	".tsx":        "typescript",
+	".java":       "java",
+	".kt":         "kotlin",
+	".rb":         "ruby",
+	".php":        "php",
+	".rs":         "rust",
+	".c":          "c",
+	".h":          "c",
+	".cc":         "cpp",
+	".cpp":        "cpp",
+	".hpp":        "cpp",
+	".cs":         "csharp",
+	".scala":      "scala",
+	".swift":      "swift",
+	".sh":         "shell",
+	".bash":       "shell",
+	".zsh":        "shell",
+	".sql":        "sql",
+	".tf":         "terraform",
+	".yml":        "yaml",
+	".yaml":       "yaml",
+	".json":       "json",
+	".toml":       "toml",
+	".xml":        "xml",
+	".html":       "html",
 	".dockerfile": "dockerfile",
 }
 
@@ -72,6 +72,8 @@ func IsExcluded(path string, patterns []string) bool {
 
 // Walk discovers code files under root, applying include/exclude/maxBytes filters.
 // `include` is matched on the file path with filepath.Match against the basename; empty means all.
+//
+//nolint:gocyclo // filter pipeline with include/exclude/size/symlink branches
 func Walk(root string, include, exclude []string, maxBytes int, followSymlinks bool) ([]types.FileTarget, error) {
 	var targets []types.FileTarget
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -115,7 +117,7 @@ func Walk(root string, include, exclude []string, maxBytes int, followSymlinks b
 		if maxBytes > 0 && info.Size() > int64(maxBytes) {
 			return nil
 		}
-		b, rerr := os.ReadFile(p)
+		b, rerr := os.ReadFile(p) //nolint:gosec // p comes from WalkDir under user-supplied root; reading is intentional
 		if rerr != nil {
 			return nil
 		}

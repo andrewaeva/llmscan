@@ -201,7 +201,7 @@ func TestDeepAgentDispatchTools(t *testing.T) {
 	}
 
 	// grep
-	out, err = a.dispatch(context.Background(), llm.ToolCall{
+	_, err = a.dispatch(context.Background(), llm.ToolCall{
 		Name: "grep", Input: []byte(`{"pattern":"line2","max_matches":10}`),
 	})
 	if err != nil {

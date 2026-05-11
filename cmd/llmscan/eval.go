@@ -69,7 +69,7 @@ func runEval(adapter, datasetPath, target, cfgPath, outPath, format string, verb
 	if err != nil {
 		return err
 	}
-	defer closeOut()
+	defer func() { _ = closeOut() }()
 	if strings.ToLower(format) == "json" {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")

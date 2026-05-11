@@ -1,7 +1,7 @@
 // Package harness produces artifacts consumable by Harness STO (Security Test Orchestration).
 //
-//   * STO ingests SARIF natively. We expose `WriteSTOSarif` for that path.
-//   * For pipelines we also generate a `harness-step.yaml` snippet that calls
+//   - STO ingests SARIF natively. We expose `WriteSTOSarif` for that path.
+//   - For pipelines we also generate a `harness-step.yaml` snippet that calls
 //     llmscan with the right flags and uploads the SARIF report.
 package harness
 

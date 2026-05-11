@@ -581,6 +581,33 @@ reachability: downgraded X findings
 
 ---
 
+## Development
+
+Common Make targets used during local development:
+
+```
+make lint        # golangci-lint run ./...
+make fmt         # gofmt -s -w + goimports -w
+make test        # go test (also: make test-race, test-cover)
+make precommit   # pre-commit run --all-files
+```
+
+First-time setup (optional but recommended):
+
+```
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+go install golang.org/x/tools/cmd/goimports@latest
+pre-commit install
+```
+
+The repo ships with `.golangci.yml` (errcheck, gosimple, govet, ineffassign,
+staticcheck, unused, gocyclo, gocritic, gosec, misspell, unconvert, unparam,
+prealloc, bodyclose, noctx, revive) and `.pre-commit-config.yaml` (go-fmt,
+go-imports, go-mod-tidy, go-vet plus the standard pre-commit hooks). The CI
+lint job runs `golangci-lint-action` on every push and PR.
+
+---
+
 ## Releases
 
 Релизы собираются автоматически через [GoReleaser](https://goreleaser.com/) при

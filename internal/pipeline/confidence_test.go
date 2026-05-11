@@ -73,7 +73,7 @@ func TestResolveConfidence(t *testing.T) {
 			name: "reach_downgrade_does_not_drop_below_medium_when_verifier_confirms",
 			in: types.Finding{
 				Severity: types.SevHigh, Confidence: types.ConfLow,
-				File: "internal/foo/foo_test.go",
+				File:     "internal/foo/foo_test.go",
 				FPReason: "reachability: test fixture file",
 				Verified: true, VerifierVerdict: "true_positive",
 			},

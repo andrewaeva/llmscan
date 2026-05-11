@@ -14,6 +14,8 @@ import (
 )
 
 // enabledScanners computes which scanner agents (built-in + skills + IaC) should run.
+//
+//nolint:gocyclo // routing across scanner kinds; flat dispatch
 func (e *Engine) enabledScanners(plan types.ScanPlan, skillByName map[string]*skills.Skill, files []types.FileTarget) []string {
 	focus := map[string]bool{}
 	for _, f := range plan.Focus {
@@ -62,6 +64,8 @@ func (e *Engine) enabledScanners(plan types.ScanPlan, skillByName map[string]*sk
 }
 
 // buildDAG wires scanner / aggregate / dedup / verifier / fp_filter nodes.
+//
+//nolint:gocyclo // declarative graph wiring; cleaner inline than split
 func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.Skill, sc scanContext) (*dag.DAG, error) {
 	chunks := sc.chunks
 	contentByPath := sc.contentByPath

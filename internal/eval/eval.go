@@ -204,8 +204,8 @@ func loadOwasp(path string) ([]Label, error) {
 		if strings.HasPrefix(row[0], "#") {
 			continue
 		}
-		real := strings.ToLower(strings.TrimSpace(row[2]))
-		if real != "true" {
+		isReal := strings.ToLower(strings.TrimSpace(row[2]))
+		if isReal != "true" {
 			continue
 		}
 		cwe := "CWE-" + strings.TrimSpace(row[3])

@@ -9,7 +9,8 @@ import (
 )
 
 // Version is the build version of llmscan. Overridden at release time via:
-//   go build -ldflags "-X main.Version=v1.2.3"
+//
+//	go build -ldflags "-X main.Version=v1.2.3"
 var Version = "0.3.0"
 
 func main() {
@@ -56,7 +57,7 @@ func initConfigCmd() *cobra.Command {
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("%s already exists", path)
 			}
-			return os.WriteFile(path, []byte(sampleConfig), 0o644)
+			return os.WriteFile(path, []byte(sampleConfig), 0o644) //nolint:gosec // sample config is intentionally world-readable
 		},
 	}
 	cmd.Flags().StringVarP(&path, "path", "p", "llmscan.yaml", "Where to write the sample config")

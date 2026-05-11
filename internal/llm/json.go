@@ -20,17 +20,17 @@ func CompleteJSON(ctx context.Context, c Client, req Request, retries int) (Resp
 		}
 		js := ExtractJSON(resp.Text)
 		var probe any
-		if err := json.Unmarshal([]byte(js), &probe); err == nil {
+		jerr := json.Unmarshal([]byte(js), &probe)
+		if jerr == nil {
 			return resp, []byte(js), nil
-		} else {
-			lastErr = err
-			req.Messages = append(req.Messages,
-				Message{Role: "assistant", Content: resp.Text},
-				Message{Role: "user", Content: fmt.Sprintf(
-					"Your previous response was not valid JSON (%v). Return ONLY a JSON object, no prose, no markdown.",
-					err)},
-			)
 		}
+		lastErr = jerr
+		req.Messages = append(req.Messages,
+			Message{Role: "assistant", Content: resp.Text},
+			Message{Role: "user", Content: fmt.Sprintf(
+				"Your previous response was not valid JSON (%v). Return ONLY a JSON object, no prose, no markdown.",
+				jerr)},
+		)
 	}
 	return Response{}, nil, fmt.Errorf("llm: invalid JSON after %d retries: %w", retries, lastErr)
 }

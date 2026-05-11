@@ -55,12 +55,12 @@ func TestLinkIsIdentity(t *testing.T) {
 
 func TestCaptureLHS(t *testing.T) {
 	cases := map[string]string{
-		"x := 1":           "x",
-		"  q = r.Query()":  "q",
-		"  if x > 0":       "",
-		"":                 "",
-		"return x":         "",
-		"db.Exec(q)":       "",
+		"x := 1":          "x",
+		"  q = r.Query()": "q",
+		"  if x > 0":      "",
+		"":                "",
+		"return x":        "",
+		"db.Exec(q)":      "",
 	}
 	for in, want := range cases {
 		if got := captureLHS(in); got != want {

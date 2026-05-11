@@ -6,7 +6,7 @@ PKG         := github.com/andrewaeva/llmscan
 TESTED_PKGS := $(shell go list ./... | grep -v /examples/)
 COVER_FILE  := coverage.out
 
-.PHONY: help build install test test-race test-cover test-cover-html bench bench-cpu bench-mem fmt vet tidy clean
+.PHONY: help build install test test-race test-cover test-cover-html bench bench-cpu bench-mem fmt vet tidy clean lint precommit
 
 help:
 	@echo "Targets:"
@@ -19,8 +19,10 @@ help:
 	@echo "  bench           - run all benchmarks (1x)"
 	@echo "  bench-cpu       - run benchmarks with CPU profile"
 	@echo "  bench-mem       - run benchmarks with allocation reports"
-	@echo "  fmt             - gofmt -s -w"
+	@echo "  fmt             - gofmt -s -w + goimports -w"
 	@echo "  vet             - go vet"
+	@echo "  lint            - golangci-lint run ./..."
+	@echo "  precommit       - run all pre-commit hooks"
 	@echo "  tidy            - go mod tidy"
 	@echo "  clean           - remove build artifacts and coverage files"
 
@@ -54,9 +56,16 @@ bench-mem:
 
 fmt:
 	gofmt -s -w .
+	@command -v goimports >/dev/null 2>&1 && goimports -w . || echo "goimports not installed; skipping (go install golang.org/x/tools/cmd/goimports@latest)"
 
 vet:
 	go vet ./...
+
+lint:
+	golangci-lint run ./...
+
+precommit:
+	pre-commit run --all-files
 
 tidy:
 	go mod tidy

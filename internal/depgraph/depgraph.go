@@ -15,8 +15,8 @@ import (
 
 // Node is a file or an external module.
 type Node struct {
-	ID       string `json:"id"`        // canonical id: file path (relative to root) or "ext:lodash"
-	IsFile   bool   `json:"is_file"`   // true if it is a file in the project
+	ID       string `json:"id"`      // canonical id: file path (relative to root) or "ext:lodash"
+	IsFile   bool   `json:"is_file"` // true if it is a file in the project
 	Language string `json:"language,omitempty"`
 	Path     string `json:"path,omitempty"`
 }
