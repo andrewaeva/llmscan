@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/andrewaeva/llmscan/internal/agents"
 	"github.com/andrewaeva/llmscan/internal/llm"
@@ -20,12 +22,15 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 	scanner := &agents.Scanner{Name: name, Client: client, PromptOverride: promptOverride}
 	conc := e.Cfg.Scan.Concurrency
 	if conc <= 0 {
-		conc = 4
+		conc = 8
 	}
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var out []types.Finding
+	var done int64
+	total := len(chunks)
+	start := time.Now()
 
 	for _, c := range chunks {
 		wg.Add(1)
@@ -118,6 +123,11 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 			mu.Lock()
 			out = append(out, fnds...)
 			mu.Unlock()
+
+			n := atomic.AddInt64(&done, 1)
+			if e.Verbose && total >= 20 && (n%25 == 0 || n == int64(total)) {
+				e.logf("scan:%s progress %d/%d (%.0fs)", name, n, total, time.Since(start).Seconds())
+			}
 		}(c)
 	}
 	wg.Wait()

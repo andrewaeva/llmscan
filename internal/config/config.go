@@ -33,7 +33,8 @@ type ScanConfig struct {
 	MaxFileBytes   int      `yaml:"max_file_bytes,omitempty"`
 	ChunkLines     int      `yaml:"chunk_lines,omitempty"`
 	ChunkOverlap   int      `yaml:"chunk_overlap,omitempty"`
-	Concurrency    int      `yaml:"concurrency,omitempty"`
+	Concurrency    int      `yaml:"concurrency,omitempty"`       // chunks in flight per single scanner agent
+	AgentParallel  int      `yaml:"agent_parallel,omitempty"`     // scanner agents in flight (DAG layer)
 	FollowSymlinks bool     `yaml:"follow_symlinks,omitempty"`
 }
 
@@ -183,7 +184,8 @@ func Default() Config {
 			MaxFileBytes:   256 * 1024,
 			ChunkLines:     350,
 			ChunkOverlap:   30,
-			Concurrency:    8,
+			Concurrency:    16,
+			AgentParallel:  8,
 			FollowSymlinks: false,
 			Exclude: []string{
 				".git/", "node_modules/", "vendor/", "dist/", "build/", "target/",

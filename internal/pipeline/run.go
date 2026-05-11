@@ -115,8 +115,14 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	}
 	e.logf("DAG layers: %v", d.Layers())
 
-	// 8) Execute.
-	outputs, dagErrs := d.Run(ctx, e.Cfg.Scan.Concurrency)
+	// 8) Execute. DAG-level parallelism gates the number of scanner *agents*
+	// running concurrently; per-chunk parallelism is gated separately inside
+	// each scanner node via Scan.Concurrency.
+	agentPar := e.Cfg.Scan.AgentParallel
+	if agentPar <= 0 {
+		agentPar = max(len(enabledScanners), 4)
+	}
+	outputs, dagErrs := d.Run(ctx, agentPar)
 	for name, err := range dagErrs {
 		e.logf("dag node %s: %v", name, err)
 	}
