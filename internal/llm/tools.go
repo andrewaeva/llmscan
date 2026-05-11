@@ -59,11 +59,25 @@ type ToolResponse struct {
 }
 
 // ErrToolsUnsupported is returned by clients that don't (yet) implement the
-// tool-calling loop. Currently only the Anthropic client supports it.
+// tool-calling loop. Currently the Anthropic and OpenAI clients support it.
 var ErrToolsUnsupported = errors.New("llm: tool-calling not supported by this provider")
 
-// ToolClient is implemented by clients that can drive a tool-use loop.
+// ToolClient is implemented by clients that can drive a tool-use loop. The
+// loop is provider-agnostic — Anthropic uses its native tool_use/tool_result
+// content blocks, while OpenAI uses Responses API function calls (with a
+// Chat Completions fallback). The ToolDef/ToolCall/ToolResult types are
+// provider-neutral; provider-specific metadata (e.g. Anthropic cache_control)
+// is ignored by other backends.
 type ToolClient interface {
 	Client
 	CompleteWithTools(ctx context.Context, req ToolRequest) (ToolResponse, error)
+}
+
+// AsToolLooper returns the client as a ToolClient (tool-loop capable) when
+// the underlying implementation supports the tool-use loop. This is the
+// runtime equivalent of a type assertion; callers should use it instead of
+// hard-coding a provider check.
+func AsToolLooper(c Client) (ToolClient, bool) {
+	tc, ok := c.(ToolClient)
+	return tc, ok
 }

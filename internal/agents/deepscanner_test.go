@@ -3,10 +3,14 @@ package agents
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/tools"
 	"github.com/andrewaeva/llmscan/internal/types"
@@ -404,4 +408,81 @@ func TestFormatChunksAsContextEmpty(t *testing.T) {
 // writeFile is a tiny helper used by deep tests above.
 func writeFile(path, content string) error {
 	return writeFileAtomic(path, []byte(content))
+}
+
+// TestDeepAgentWithOpenAIProvider wires a real *openAIClient (Chat
+// Completions transport) to the DeepAgent via the AsToolLooper helper. The
+// scripted server emits one tool call followed by a final JSON verdict so we
+// exercise the full tool-loop end to end on the OpenAI shape.
+func TestDeepAgentWithOpenAIProvider(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.Error(w, "unexpected path "+r.URL.Path, 404)
+			return
+		}
+		n := atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		switch n {
+		case 1:
+			_, _ = w.Write([]byte(`{
+                "choices": [{
+                    "message": {"role":"assistant","tool_calls":[
+                        {"id":"c1","type":"function",
+                         "function":{"name":"read_file","arguments":"{\"path\":\"a.go\"}"}}]},
+                    "finish_reason":"tool_calls"
+                }],
+                "usage":{"prompt_tokens":5,"completion_tokens":2}
+            }`))
+		default:
+			_, _ = w.Write([]byte(`{
+                "choices": [{
+                    "message":{"role":"assistant","content":"Looked at file.\n{\"verdict\":\"confirmed\",\"reason\":\"taint reaches sink\",\"fix\":\"escape\"}"},
+                    "finish_reason":"stop"
+                }],
+                "usage":{"prompt_tokens":4,"completion_tokens":3}
+            }`))
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("OPENAI_API_KEY", "test")
+	t.Setenv("OPENAI_BASE_URL", srv.URL)
+	rawClient, err := llm.New(config.ModelSpec{
+		Provider:    "openai",
+		Model:       "gpt-4o-mini",
+		MaxTokens:   400,
+		Temperature: 0.1,
+	})
+	if err != nil {
+		t.Fatalf("llm.New: %v", err)
+	}
+	tc, ok := llm.AsToolLooper(rawClient)
+	if !ok {
+		t.Fatal("openai client should pass AsToolLooper")
+	}
+
+	root := t.TempDir()
+	if err := writeFile(filepath.Join(root, "a.go"), "package x\nfunc Exec() {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, _ := tools.NewSandbox(root)
+
+	agent := &DeepAgent{Client: tc, Sandbox: sandbox, Budget: 4, ModelName: "gpt-4o-mini"}
+	res := agent.Verify(context.Background(), types.Finding{
+		File: "a.go", StartLine: 1, EndLine: 2,
+		Severity: types.SevHigh, Title: "sql",
+	})
+	if res.Verdict != "confirmed" {
+		t.Errorf("verdict=%q want confirmed; reason=%q", res.Verdict, res.Reason)
+	}
+	if res.Fix != "escape" {
+		t.Errorf("fix=%q", res.Fix)
+	}
+	if len(res.Trace) != 1 || res.Trace[0].Tool != "read_file" {
+		t.Errorf("expected one read_file trace entry, got %+v", res.Trace)
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Errorf("expected 2 round-trips, got %d", hits)
+	}
 }
