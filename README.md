@@ -42,6 +42,43 @@ regex+entropy для секретов, IaC-сканеры, baseline и diff-ре
 
 ## Установка
 
+### Docker (рекомендуется)
+
+```bash
+# Последний релиз с GHCR.
+docker run --rm -v "$PWD:/work" ghcr.io/andrewaeva/llmscan:latest scan /work
+
+# С API-ключом для LLM-провайдера.
+docker run --rm \
+  -e ANTHROPIC_API_KEY \
+  -v "$PWD:/work" \
+  ghcr.io/andrewaeva/llmscan:latest scan /work --fail-on high
+```
+
+Образ — distroless (`gcr.io/distroless/static-debian12:nonroot`), <30 MB,
+содержит бинарь и встроенные `skills/`.
+
+### Предкомпилированные бинари
+
+Скачайте архив для своей платформы со страницы
+[Releases](https://github.com/andrewaeva/llmscan/releases) — там лежат сборки
+для linux/macOS/windows на amd64/arm64 вместе с `skills/` и `checksums.txt`.
+
+### `go install`
+
+```bash
+go install github.com/andrewaeva/llmscan/cmd/llmscan@latest
+```
+
+### Homebrew
+
+```bash
+# placeholder — tap появится с первым релизом
+# brew install andrewaeva/tap/llmscan
+```
+
+### Из исходников
+
 ```bash
 git clone https://github.com/andrewaeva/llmscan
 cd llmscan
@@ -544,6 +581,31 @@ reachability: downgraded X findings
 
 ---
 
+## Releases
+
+Релизы собираются автоматически через [GoReleaser](https://goreleaser.com/) при
+пуше тэга:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+GitHub Actions workflow `.github/workflows/release.yml`:
+
+- собирает кросс-компилированные бинари (linux/macOS/windows × amd64/arm64),
+- упаковывает архивы (`tar.gz` / `zip`) c `skills/`, `README.md`, `LICENSE`,
+- пушит multi-arch образ в `ghcr.io/andrewaeva/llmscan:<tag>` и `:latest`,
+- генерирует `checksums.txt` (sha256) и changelog из git-истории.
+
+Локальная проверка release-конфига без публикации:
+
+```bash
+goreleaser release --snapshot --clean --skip=publish
+```
+
+---
+
 ## Лицензия
 
-MIT.
+MIT — см. [`LICENSE`](LICENSE).

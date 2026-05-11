@@ -1,0 +1,32 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# CI / release infra (not needed in build context)
+.github
+.goreleaser.yaml
+.goreleaser.yml
+
+# Local build artifacts
+dist/
+build/
+/llmscan
+coverage.out
+*.prof
+*.db
+.llmscan/
+
+# Test fixtures and examples
+examples/
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+
+# Docs (keep README.md & NOTICE.md & LICENSE)
+*.md
+!README.md
+!NOTICE.md
+!LICENSE

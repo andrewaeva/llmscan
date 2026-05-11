@@ -1,0 +1,125 @@
+# GoReleaser configuration for llmscan.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: llmscan
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: llmscan
+    main: ./cmd/llmscan
+    binary: llmscan
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macOS
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - NOTICE.md
+      - skills/**/*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^docs\\("
+      - "^test:"
+      - "^test\\("
+      - "^chore:"
+      - "^chore\\("
+      - "Merge pull request"
+      - "Merge branch"
+
+dockers:
+  - id: llmscan-amd64
+    use: buildx
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/andrewaeva/llmscan"
+      - "--label=org.opencontainers.image.description=LLM-based multi-agent code security scanner"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+  - id: llmscan-arm64
+    use: buildx
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/andrewaeva/llmscan"
+      - "--label=org.opencontainers.image.description=LLM-based multi-agent code security scanner"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/andrewaeva/llmscan:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-amd64"
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/andrewaeva/llmscan:latest"
+    image_templates:
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-amd64"
+      - "ghcr.io/andrewaeva/llmscan:{{ .Version }}-arm64"
+
+release:
+  github:
+    owner: andrewaeva
+    name: llmscan
+  draft: false
+  prerelease: auto

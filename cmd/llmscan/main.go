@@ -8,7 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.3.0"
+// Version is the build version of llmscan. Overridden at release time via:
+//   go build -ldflags "-X main.Version=v1.2.3"
+var Version = "0.3.0"
 
 func main() {
 	root := &cobra.Command{
@@ -37,7 +39,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("llmscan", version)
+			fmt.Println("llmscan", Version)
 		},
 	}
 }

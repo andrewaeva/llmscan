@@ -56,3 +56,21 @@ jobs:
 
       - name: Run benchmarks (smoke)
         run: go test -run=^$ -bench=. -benchtime=1x -benchmem ./...
+
+  docker-smoke:
+    name: docker-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build --build-arg VERSION=ci -t llmscan:ci .
+
+      - name: Smoke test (version)
+        run: docker run --rm llmscan:ci version
+
+      - name: Image size
+        run: docker images llmscan:ci --format '{{.Repository}}:{{.Tag}} {{.Size}}'
