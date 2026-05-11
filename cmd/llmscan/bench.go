@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -56,7 +57,7 @@ Anything after a literal "--" is passed verbatim to "go test", e.g.:
 			gotestArgs = append(gotestArgs, pkg)
 			gotestArgs = append(gotestArgs, args...)
 
-			fmt.Fprintln(os.Stderr, "+ go", join(gotestArgs))
+			fmt.Fprintln(os.Stderr, "+ go", strings.Join(gotestArgs, " "))
 			run := exec.Command("go", gotestArgs...)
 			run.Stdout = os.Stdout
 			run.Stderr = os.Stderr
@@ -73,15 +74,4 @@ Anything after a literal "--" is passed verbatim to "go test", e.g.:
 	cmd.Flags().StringVar(&pkg, "pkg", "./internal/...", "Go packages to benchmark")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose go test output")
 	return cmd
-}
-
-func join(args []string) string {
-	out := ""
-	for i, a := range args {
-		if i > 0 {
-			out += " "
-		}
-		out += a
-	}
-	return out
 }
