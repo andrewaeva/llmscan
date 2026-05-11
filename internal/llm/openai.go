@@ -83,7 +83,7 @@ type oaMessage struct {
 type oaRequest struct {
 	Model               string         `json:"model"`
 	Messages            []oaMessage    `json:"messages"`
-	Temperature         float64        `json:"temperature"`
+	Temperature         *float64       `json:"temperature,omitempty"`
 	MaxTokens           int            `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
 	ResponseFormat      map[string]any `json:"response_format,omitempty"`
@@ -126,17 +126,23 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 		msgs = append(msgs, oaMessage(m))
 	}
 	body := oaRequest{
-		Model:       c.spec.Model,
-		Messages:    msgs,
-		Temperature: c.spec.Temperature,
+		Model:    c.spec.Model,
+		Messages: msgs,
 	}
-	if modelUsesMaxCompletionTokens(c.spec.Model) {
+	reasoning := modelUsesMaxCompletionTokens(c.spec.Model)
+	if reasoning {
 		body.MaxCompletionTokens = c.spec.MaxTokens
 	} else {
 		body.MaxTokens = c.spec.MaxTokens
 	}
-	if req.TemperatureOverride != nil {
-		body.Temperature = *req.TemperatureOverride
+	// GPT-5 / o1 / o3 / o4 reasoning models only accept the default temperature (1)
+	// and reject any explicit value. Omit the field for those models.
+	if !reasoning {
+		temp := c.spec.Temperature
+		if req.TemperatureOverride != nil {
+			temp = *req.TemperatureOverride
+		}
+		body.Temperature = &temp
 	}
 	if req.JSON {
 		if req.Schema != nil {

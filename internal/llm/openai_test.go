@@ -116,8 +116,62 @@ func TestOpenAITemperatureOverride(t *testing.T) {
 	if _, err := c.Complete(context.Background(), Request{TemperatureOverride: &override}); err != nil {
 		t.Fatal(err)
 	}
-	if gotReq.Temperature != 1.3 {
+	if gotReq.Temperature == nil || *gotReq.Temperature != 1.3 {
 		t.Errorf("temp=%v want 1.3", gotReq.Temperature)
+	}
+}
+
+func TestOpenAIReasoningModelOmitsTemperatureAndUsesMaxCompletionTokens(t *testing.T) {
+	cases := []string{"gpt-5.5", "gpt-5", "o1", "o3-mini", "o4-mini", "chat-latest"}
+	for _, model := range cases {
+		t.Run(model, func(t *testing.T) {
+			var gotReq oaRequest
+			var raw map[string]any
+			srv, c := newOpenAITestServer(t, func(r *http.Request, body []byte) (int, string) {
+				_ = json.Unmarshal(body, &gotReq)
+				_ = json.Unmarshal(body, &raw)
+				return 200, `{"choices":[{"message":{"content":"x"}}]}`
+			})
+			_ = srv
+			c.spec.Model = model
+			c.spec.MaxTokens = 1234
+			override := 0.4
+			if _, err := c.Complete(context.Background(), Request{TemperatureOverride: &override}); err != nil {
+				t.Fatal(err)
+			}
+			if _, present := raw["temperature"]; present {
+				t.Errorf("temperature must be omitted for reasoning model %s", model)
+			}
+			if _, present := raw["max_tokens"]; present {
+				t.Errorf("max_tokens must be omitted for reasoning model %s", model)
+			}
+			if gotReq.MaxCompletionTokens != 1234 {
+				t.Errorf("max_completion_tokens=%d want 1234", gotReq.MaxCompletionTokens)
+			}
+		})
+	}
+}
+
+func TestOpenAILegacyModelKeepsTemperatureAndMaxTokens(t *testing.T) {
+	var raw map[string]any
+	_, c := newOpenAITestServer(t, func(r *http.Request, body []byte) (int, string) {
+		_ = json.Unmarshal(body, &raw)
+		return 200, `{"choices":[{"message":{"content":"x"}}]}`
+	})
+	c.spec.Model = "gpt-4o"
+	c.spec.MaxTokens = 999
+	c.spec.Temperature = 0.0
+	if _, err := c.Complete(context.Background(), Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := raw["temperature"]; !present {
+		t.Errorf("temperature must be present for legacy model (even when 0)")
+	}
+	if v, _ := raw["max_tokens"].(float64); v != 999 {
+		t.Errorf("max_tokens=%v want 999", raw["max_tokens"])
+	}
+	if _, present := raw["max_completion_tokens"]; present {
+		t.Errorf("max_completion_tokens must NOT be sent for legacy model")
 	}
 }
 
