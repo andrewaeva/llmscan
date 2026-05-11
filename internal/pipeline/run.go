@@ -141,6 +141,12 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	// Optional sub-agent deep pass runs BEFORE dropByPolicy so that findings
 	// the deep agent refutes are filtered out via the standard FP path.
 	final = e.runDeepPass(ctx, target, cdb, final)
+	// Resolve final Confidence from all collected signals (scanner, verifier,
+	// deep, taint, secrets, reach). This must run AFTER deep so that confirmed
+	// hotspots are not stuck at the value reach.Apply forced earlier.
+	if n := applyConfidence(final); n > 0 {
+		e.logf("confidence: updated %d findings", n)
+	}
 	final = e.dropByPolicy(final, &report)
 	final = e.applyBaseline(cdb, final)
 
