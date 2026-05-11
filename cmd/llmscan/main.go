@@ -74,13 +74,18 @@ agents:
   orchestrator:
     enabled: true
     # model: { provider: openai, model: gpt-4o-mini }
-  injection:       { enabled: true }
-  secrets:         { enabled: true }
-  auth:            { enabled: true }
-  crypto:          { enabled: true }
-  deserialization: { enabled: true }
-  ssrf:            { enabled: true }
-  generic:         { enabled: true }
+  injection:         { enabled: true }
+  secrets:           { enabled: true }
+  auth:              { enabled: true }
+  crypto:            { enabled: true }
+  deserialization:   { enabled: true }
+  ssrf:              { enabled: true }
+  generic:           { enabled: true }
+  insecure-defaults: { enabled: true }
+  race-conditions:   { enabled: true }
+  error-handling:    { enabled: true }
+  supply-chain:      { enabled: true }
+  memory-safety:     { enabled: true }
 
   verifier:
     enabled: true

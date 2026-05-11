@@ -11,8 +11,13 @@ import (
 )
 
 // ScannerNames is the canonical, ordered list of specialized scanner agents.
+// New skill names (insecure-defaults, race-conditions, error-handling,
+// supply-chain, memory-safety) load dynamically via skills/*/SKILL.md and are
+// auto-registered into the DAG by enabledScanners, but they're listed here so
+// the orchestrator's default focus plan includes them too.
 var ScannerNames = []string{
 	"injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic",
+	"insecure-defaults", "race-conditions", "error-handling", "supply-chain", "memory-safety",
 }
 
 // ---- shared helpers ----

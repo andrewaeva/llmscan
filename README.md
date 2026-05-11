@@ -365,17 +365,46 @@ Fingerprint баззлайна = `sha256(rule_id|agent|file|normalized_code)[:16
 
 ---
 
-## IaC
+## Skills (scanner agents)
 
-Скиллы автоматически включаются при обнаружении соответствующих файлов:
+Каждый скилл — `skills/<name>/SKILL.md` с YAML-фронтматтером и развёрнутым
+промптом (scope, языковые паттерны, FP-фильтры, calibration, references).
+Скиллы подгружаются динамически — добавление новой директории
+`skills/<name>/SKILL.md` автоматически делает её доступной сканеру.
+
+**Code (application-level):**
+
+| Skill | Что ищет | Severity | Основные CWE |
+|---|---|---|---|
+| `injection` | SQL / NoSQL / cmd / template / LDAP / XPath / GraphQL injection | high | CWE-89, 78, 94, 643, 91, 943 |
+| `secrets` | hardcoded API keys, tokens, private keys, DB URIs | high | CWE-798, 321, 259, 522 |
+| `auth` | broken authn/authz, IDOR, JWT misuse, session/2FA flaws | high | CWE-287, 285, 639, 862, 863 |
+| `crypto` | weak algos, ECB, static IV, predictable RNG, non-CT compare | medium | CWE-327, 326, 330, 338, 208 |
+| `deserialization` | unsafe pickle/Marshal/ObjectInputStream/BinaryFormatter | critical | CWE-502 |
+| `ssrf` | SSRF, open redirect, cloud-metadata access, DNS rebinding | high | CWE-918, 601 |
+| `generic` | path traversal, XXE, XSS, CSRF, CORS, prototype pollution, ReDoS, mass assignment | medium | CWE-22, 611, 79, 352, 942, 1321, 1333 |
+| `insecure-defaults` | fail-open fallbacks, default-permit ACLs, dev defaults reaching prod | high | CWE-1188, 453 |
+| `race-conditions` | TOCTOU, insecure temp files, check-then-act, data races | medium | CWE-362, 367, 377 |
+| `error-handling` | ignored errors, panic on user input, stack-trace leakage | low | CWE-209, 754, 755 |
+| `supply-chain` | typosquatting, unpinned deps, curl\|sh, postinstall scripts | high | CWE-1357, 1104, 829, 494 |
+| `memory-safety` | Go/Rust/C/C++ unsafe, integer overflow, UAF, format strings | critical | CWE-119, 787, 416, 190, 134 |
+
+**IaC (auto-enabled by filetype):**
 
 - `iac-docker`     — `Dockerfile`, `Containerfile`, `docker-compose.yml`
 - `iac-k8s`        — манифесты с `apiVersion:` и `kind:`
 - `iac-terraform`  — `*.tf`, `*.tfvars`
 - `iac-ghactions`  — `.github/workflows/*.yml`
 
-Каждый скилл — `SKILL.md` с YAML-фронтматтером и подробным промптом для LLM.
 Watchlist pre-filter **никогда** не отбрасывает IaC-файлы.
+
+### Атрибуция
+
+Промпты ряда скиллов (особенно `insecure-defaults`, `supply-chain`,
+`iac-ghactions`, паттерны constant-time / zeroize в `crypto`, методология
+FP-фильтрации) черпают идеи из открытой коллекции
+[Trail of Bits Skills](https://github.com/trailofbits/skills) (MIT) —
+см. `NOTICE.md`.
 
 ---
 
