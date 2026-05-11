@@ -1,6 +1,10 @@
 .llmscan/
 *.db
-llmscan
+# binary at repo root
 /llmscan
 dist/
 build/
+coverage.out
+*.prof
+!cmd/llmscan/
+
