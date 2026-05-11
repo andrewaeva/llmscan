@@ -1,0 +1,6 @@
+.llmscan/
+*.db
+llmscan
+/llmscan
+dist/
+build/
