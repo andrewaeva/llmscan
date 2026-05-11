@@ -183,7 +183,7 @@ func Default() Config {
 			MaxFileBytes:   256 * 1024,
 			ChunkLines:     350,
 			ChunkOverlap:   30,
-			Concurrency:    4,
+			Concurrency:    8,
 			FollowSymlinks: false,
 			Exclude: []string{
 				".git/", "node_modules/", "vendor/", "dist/", "build/", "target/",

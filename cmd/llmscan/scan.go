@@ -29,14 +29,15 @@ type scanFlags struct {
 	skillsDirs                           []string
 
 	// v3
-	diffRange, baseline, baselineWrite         string
-	noWatchlist, noSymexpand, noTaint, noReach bool
-	noSecretsPF                                bool
-	minScore                                   float64
-	voteN, voteK                               int
-	jsonRetries                                int
-	cachePath                                  string
-	noCache                                    bool
+	diffRange, baseline, baselineWrite           string
+	noWatchlist, noSymexpand, noTaint, noReach   bool
+	noSecretsPF                                  bool
+	noOrchestrator, noVerifier, noFPFilter, fast bool
+	minScore                                     float64
+	voteN, voteK                                 int
+	jsonRetries                                  int
+	cachePath                                    string
+	noCache                                      bool
 }
 
 func scanCmd() *cobra.Command {
@@ -106,7 +107,7 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().StringVar(&f.provider, "provider", "", "Default LLM provider: openai | anthropic")
 	cmd.Flags().StringVar(&f.verifModel, "verifier-model", "", "Override model for verifier agent")
 	cmd.Flags().StringVar(&f.fpModel, "fp-model", "", "Override model for FP-filter agent")
-	cmd.Flags().IntVarP(&f.concurrency, "concurrency", "j", 0, "Parallel LLM calls (default 4)")
+	cmd.Flags().IntVarP(&f.concurrency, "concurrency", "j", 0, "Parallel LLM calls (default 8)")
 	cmd.Flags().BoolVar(&f.keepFP, "keep-fp", false, "Keep findings marked as false positives in the output")
 	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "Verbose logging")
 	cmd.Flags().StringSliceVar(&f.include, "include", nil, "Include filename globs (e.g. '*.go')")
@@ -134,4 +135,10 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().IntVar(&f.jsonRetries, "json-retries", -1, "Structured-output retries on schema failure (default 2)")
 	cmd.Flags().StringVar(&f.cachePath, "cache-path", "", "Override sqlite cache path (default .llmscan/cache.db)")
 	cmd.Flags().BoolVar(&f.noCache, "no-cache", false, "Disable sqlite cache entirely")
+
+	// Speed knobs.
+	cmd.Flags().BoolVar(&f.noOrchestrator, "no-orchestrator", false, "Skip the LLM planner; use graph-based fallback plan (saves 1 LLM call)")
+	cmd.Flags().BoolVar(&f.noVerifier, "no-verifier", false, "Skip the per-finding verifier pass (saves N LLM calls)")
+	cmd.Flags().BoolVar(&f.noFPFilter, "no-fp-filter", false, "Skip the LLM false-positive filter (deterministic dedup still runs)")
+	cmd.Flags().BoolVar(&f.fast, "fast", false, "Speed preset: no-orchestrator + no-verifier + no-fp-filter + concurrency=16")
 }

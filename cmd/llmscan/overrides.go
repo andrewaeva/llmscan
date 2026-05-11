@@ -48,6 +48,7 @@ func applyFlagOverrides(cfg *config.Config, f *scanFlags) {
 	applyFocusOverrides(cfg, f)
 	applyPrecisionOverrides(cfg, f)
 	applyIOOverrides(cfg, f)
+	applySpeedOverrides(cfg, f)
 }
 
 func applyModelOverrides(cfg *config.Config, f *scanFlags) {
@@ -129,6 +130,31 @@ func applyFocusOverrides(cfg *config.Config, f *scanFlags) {
 			ac.Model = config.ModelSpec{}
 		}
 		cfg.Agents[name] = ac
+	}
+}
+
+func applySpeedOverrides(cfg *config.Config, f *scanFlags) {
+	if f.fast {
+		f.noOrchestrator = true
+		f.noVerifier = true
+		f.noFPFilter = true
+		if f.concurrency == 0 {
+			cfg.Scan.Concurrency = 16
+		}
+	}
+	disable := func(name string) {
+		ac := cfg.Agents[name]
+		ac.Enabled = false
+		cfg.Agents[name] = ac
+	}
+	if f.noOrchestrator {
+		disable("orchestrator")
+	}
+	if f.noVerifier {
+		disable("verifier")
+	}
+	if f.noFPFilter {
+		disable("fp_filter")
 	}
 }
 
