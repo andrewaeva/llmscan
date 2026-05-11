@@ -3,6 +3,53 @@ package types
 
 import "time"
 
+// Gate is the status of one of the six Trail-of-Bits fp-check gates.
+//
+// Each gate either supports the vulnerability (Pass), refutes it (Fail), or
+// could not be evaluated (NotApp / Unknown). The Verifier and DeepAgent both
+// emit a GateReview that is consumed by applyGates to derive the final
+// verdict on the candidate finding.
+type Gate string
+
+const (
+	GatePass    Gate = "pass" // gate supports the vulnerability
+	GateFail    Gate = "fail" // gate refutes / blocks the vulnerability
+	GateNotApp  Gate = "n/a"  // gate not applicable to this finding
+	GateUnknown Gate = ""     // gate not evaluated (default)
+)
+
+// GateReview captures the six fp-check gates plus a short rationale per gate.
+//
+// Methodology adapted from Trail of Bits fp-check
+// (https://trailofbits-skills.mintlify.app/plugins/fp-check, MIT):
+//
+//  1. Control       — attacker actually controls the source?
+//  2. Reachability  — is the path to the sink reachable?
+//  3. Validation    — does upstream validation block exploitation?
+//  4. APIContract   — does the API itself protect (prepared stmt, memcpy_s, ...)?
+//  5. Environment   — does runtime/compiler/OS mitigate (CSP, ASLR, sandbox, ...)?
+//  6. Impact        — is there a real security impact, or is it robustness only?
+type GateReview struct {
+	Control      Gate `json:"control,omitempty"`
+	Reachability Gate `json:"reachability,omitempty"`
+	Validation   Gate `json:"validation,omitempty"`
+	APIContract  Gate `json:"api_contract,omitempty"`
+	Environment  Gate `json:"environment,omitempty"`
+	Impact       Gate `json:"impact,omitempty"`
+
+	ControlReason      string `json:"control_reason,omitempty"`
+	ReachabilityReason string `json:"reachability_reason,omitempty"`
+	ValidationReason   string `json:"validation_reason,omitempty"`
+	APIContractReason  string `json:"api_contract_reason,omitempty"`
+	EnvironmentReason  string `json:"environment_reason,omitempty"`
+	ImpactReason       string `json:"impact_reason,omitempty"`
+
+	// DevilsAdvocate captures the bias-checking questions the agent asked
+	// itself before issuing the verdict (e.g. "pattern bias?", "trust
+	// assumption?"). Empty when not provided.
+	DevilsAdvocate []string `json:"devils_advocate,omitempty"`
+}
+
 // Severity of a finding.
 type Severity string
 
@@ -79,6 +126,15 @@ type Finding struct {
 	DeepComment  string         `json:"deep_comment,omitempty"`
 	DeepModel    string         `json:"deep_model,omitempty"`
 	DeepTrace    []DeepToolCall `json:"deep_trace,omitempty"`
+
+	// Gates is the optional fp-check six-gate review attached by Verifier and
+	// DeepAgent. Backwards compatible: when nil it is omitted from JSON.
+	Gates *GateReview `json:"gates,omitempty"`
+
+	// DefenseInDepth marks a finding whose only failed gate is Impact (Gate 6):
+	// the issue is real but lacks a primary security impact, so it is reported
+	// as a defense-in-depth concern rather than dropped as FP.
+	DefenseInDepth bool `json:"defense_in_depth,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 }

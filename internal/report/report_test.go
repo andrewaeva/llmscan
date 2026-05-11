@@ -218,6 +218,70 @@ func TestSARIFSeverityMapping(t *testing.T) {
 	}
 }
 
+func TestWriteTextRendersGates(t *testing.T) {
+	r := sampleReport()
+	r.Findings[0].Gates = &types.GateReview{
+		Control: types.GatePass, ControlReason: "POST body",
+		Reachability: types.GatePass, ReachabilityReason: "any HTTP POST",
+		Validation: types.GateFail, ValidationReason: "no length check",
+		APIContract: types.GateFail, APIContractReason: "memcpy raw",
+		Environment: types.GateFail, EnvironmentReason: "no canaries",
+		Impact: types.GatePass, ImpactReason: "RCE",
+		DevilsAdvocate: []string{"pattern bias? no"},
+	}
+	r.Findings[0].DefenseInDepth = false
+	var buf bytes.Buffer
+	if err := WriteTextWith(&buf, r, ColorNever); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"gates:", "control:", "reachability:", "validation:",
+		"api:", "environment:", "impact:",
+		"POST body", "RCE",
+		"devil's advocate:", "pattern bias? no",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in gate render: %s", want, out)
+		}
+	}
+}
+
+func TestWriteTextRendersDefenseInDepth(t *testing.T) {
+	r := sampleReport()
+	r.Findings[0].DefenseInDepth = true
+	var buf bytes.Buffer
+	_ = WriteTextWith(&buf, r, ColorNever)
+	if !strings.Contains(buf.String(), "defense-in-depth") {
+		t.Error("expected defense-in-depth note in text output")
+	}
+}
+
+func TestSARIFIncludesGates(t *testing.T) {
+	r := sampleReport()
+	r.Findings[0].Gates = &types.GateReview{
+		Control: types.GatePass, Validation: types.GateFail, ValidationReason: "x",
+	}
+	var buf bytes.Buffer
+	if err := WriteSARIF(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	runs := doc["runs"].([]any)
+	results := runs[0].(map[string]any)["results"].([]any)
+	first := results[0].(map[string]any)
+	props, ok := first["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties missing: %v", first)
+	}
+	if _, ok := props["gates"]; !ok {
+		t.Errorf("gates absent from SARIF properties: %v", props)
+	}
+}
+
 func TestSARIFRuleIDFallback(t *testing.T) {
 	r := types.Report{
 		Findings: []types.Finding{

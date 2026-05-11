@@ -60,6 +60,10 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, 
 
 	// 3) Pick hotspots from final findings: severity >= threshold, not FP, not
 	//    suppressed. Sort by severity (worst first), then file:line, cap.
+	//
+	// fp-check escalation rule: even when severity is below the threshold,
+	// escalate findings the standard verifier flagged "inconclusive" so the
+	// deep path can resolve them.
 	threshold := severityRank(cfg.MinSeverity)
 	type idxF struct {
 		i int
@@ -70,7 +74,8 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, 
 		if f.Suppressed || f.FalsePositive {
 			continue
 		}
-		if severityRank(string(f.Severity)) < threshold {
+		inconclusive := isInconclusive(f)
+		if severityRank(string(f.Severity)) < threshold && !inconclusive {
 			continue
 		}
 		hotspots = append(hotspots, idxF{i: i, f: f})
@@ -108,14 +113,15 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, 
 
 	// 4) Fan out.
 	agent := &agents.DeepAgent{
-		Client:    tc,
-		Sandbox:   sandbox,
-		Cache:     cdb,
-		UseCache:  cfg.Cache,
-		Budget:    deepBudget(cfg),
-		Verbose:   e.Verbose,
-		Logf:      e.logf,
-		ModelName: spec.Model,
+		Client:         tc,
+		Sandbox:        sandbox,
+		Cache:          cdb,
+		UseCache:       cfg.Cache,
+		Budget:         deepBudget(cfg),
+		Verbose:        e.Verbose,
+		Logf:           e.logf,
+		ModelName:      spec.Model,
+		PromptOverride: e.loadSpecialSkill("_fpcheck-deep"),
 	}
 
 	sem := make(chan struct{}, conc)
@@ -141,9 +147,24 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, 
 			findings[hs.i].DeepComment = res.Reason
 			findings[hs.i].DeepModel = res.Model
 			findings[hs.i].DeepTrace = res.Trace
+			// Merge the deep agent's six-gate review (if any). ApplyGates
+			// keeps existing gate state on a no-op and otherwise mutates
+			// FalsePositive / Severity / DefenseInDepth consistently with
+			// the standard verifier.
+			if res.Gates != nil {
+				_ = types.ApplyGates(&findings[hs.i], res.Gates)
+			}
 			if res.Verdict == "refuted" {
 				findings[hs.i].FalsePositive = true
-				findings[hs.i].FPReason = "deep agent refuted: " + res.Reason
+				if findings[hs.i].FPReason == "" {
+					findings[hs.i].FPReason = "deep agent refuted: " + res.Reason
+				}
+			}
+			if res.DefenseInDepth {
+				findings[hs.i].DefenseInDepth = true
+				if findings[hs.i].Severity != types.SevInfo {
+					findings[hs.i].Severity = types.SevLow
+				}
 			}
 			if res.Fix != "" && findings[hs.i].SuggestedFix == "" {
 				findings[hs.i].SuggestedFix = res.Fix
@@ -160,6 +181,24 @@ func deepBudget(cfg config.DeepConfig) int {
 		return cfg.Budget
 	}
 	return 40
+}
+
+// isInconclusive reports whether the standard verifier left this finding
+// unresolved (verdict="inconclusive" / "needs_more_context", or gates with
+// an inconclusive outcome). Used by runDeepPass to decide whether to
+// escalate even when severity is below the threshold.
+func isInconclusive(f types.Finding) bool {
+	switch f.VerifierVerdict {
+	case "inconclusive", "needs_more_context":
+		return true
+	}
+	if f.Gates != nil {
+		switch f.Gates.Classify() {
+		case types.GateOutcomeInconclusive, types.GateOutcomeUnknown:
+			return true
+		}
+	}
+	return false
 }
 
 // severityRank converts a severity string to a comparable number.

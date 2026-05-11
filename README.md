@@ -264,15 +264,25 @@ severity и для каждой запускает tool-loop:
 Output тулов обрезается (≤32 KiB, ≤500 строк, ≤100 grep-матчей, ≤200 dir-записей).
 Лимит tool-вызовов на hotspot — `--deep-budget` (default 40).
 
-Агент возвращает в финальном сообщении JSON-блок:
+Агент возвращает в финальном сообщении JSON-блок с verdict'ом и шестью fp-check
+gates (см. секцию «False-positive verification» ниже):
 
 ```json
-{"verdict": "confirmed|refuted|inconclusive", "reason": "...", "fix": "..."}
+{
+  "verdict": "confirmed|refuted|inconclusive",
+  "reason": "...",
+  "fix": "...",
+  "defense_in_depth": false,
+  "gates": {"control":"pass","reachability":"pass","validation":"fail","...":"..."},
+  "devils_advocate": ["pattern bias? no", "..."]
+}
 ```
 
 - `refuted` → `Finding.FalsePositive = true` (отсев в fp_filter)
 - `confirmed` / `inconclusive` → остаются с полями `DeepVerified`, `DeepVerdict`,
   `DeepComment`, `DeepModel`, `DeepTrace` (все tool-вызовы со step/args/result/ms)
+- Если из шести gates провален только Gate 6 (Impact) — finding помечается
+  `defense_in_depth=true`, severity опускается до `low`, но не отбрасывается.
 
 Кеш tool-вызовов лежит в той же `.llmscan/cache.db` (таблица `deep_tool_cache`,
 ключ = `sha256(tool|args|root)`), включён по умолчанию, отключается через
@@ -292,6 +302,60 @@ Output тулов обрезается (≤32 KiB, ≤500 строк, ≤100 gre
 **Ограничение**: реализован только Anthropic. Если активный провайдер не
 `anthropic`, deep-пасс пропускается с предупреждением (OpenAI tools API
 пока не подключён).
+
+---
+
+## False-positive verification (six gates)
+
+Verifier (standard path) и DeepAgent (deep path) валидируют находки по
+методологии [Trail of Bits fp-check](https://trailofbits-skills.mintlify.app/plugins/fp-check):
+каждая находка проходит через шесть независимых gates.
+
+| #  | Gate          | Что проверяет                                                                |
+|----|---------------|-------------------------------------------------------------------------------|
+| 1  | Control       | Атакующий действительно контролирует source?                                  |
+| 2  | Reachability  | Достижим ли sink на реалистичном пути исполнения?                             |
+| 3  | Validation    | Есть ли upstream validation (allowlist, schema), блокирующая эксплуатацию?    |
+| 4  | APIContract   | Защищает ли сам API (parameterized query, memcpy_s, auto-escape)?             |
+| 5  | Environment   | Митигирует ли runtime/compiler/OS (ASLR, sandbox, CSP, framework auto-escape)?|
+| 6  | Impact        | Реальная security-импликация (RCE/exfil/privesc) или просто robustness?       |
+
+Каждый gate возвращает `pass`, `fail` или `n/a` плюс одно-два предложения
+обоснования. Финальный verdict выводится по правилам:
+
+- Gate 3, 4 или 5 = `fail` → **false_positive** (есть upstream defense).
+- Gate 1 или 2 = `fail` → **false_positive** (нет контроля / недостижимо).
+- Только Gate 6 = `fail` → **true_positive + defense_in_depth** (severity → low).
+- Все gates `pass` (часть может быть `n/a`) → **true_positive**.
+- Иначе → **inconclusive** (если активен `--deep` — эскалируется в deep-agent).
+
+**Standard vs Deep path:**
+
+- *Standard*: `internal/agents/verifier.go` — один LLM-вызов без tool-use,
+  для простых однокомпонентных багов с понятным data-flow. Промпт лежит в
+  `skills/_fpcheck-verifier/SKILL.md` (специальные skill'ы с префиксом `_`
+  не попадают в scanner-DAG).
+- *Deep*: `internal/agents/deepscanner.go` с read-only tools — для
+  cross-component багов, race conditions, логических багов, или когда
+  standard вернул `inconclusive` (автоматическая эскалация если `--deep`
+  включён). Промпт — `skills/_fpcheck-deep/SKILL.md`.
+
+Оба промпта явно требуют **devil's advocate** проверки (pattern bias, trust
+assumption, hallucination и др.) и явно отвергают rationalizations типа
+«pattern looks dangerous, must be real».
+
+`Finding.Gates` (опциональное поле, `omitempty`) сохраняется в JSON и в SARIF
+(внутри `properties.gates`). В text-отчёте выводится блок:
+
+```
+gates:
+  control:      pass — attacker controls Content-Length header
+  reachability: pass — any HTTP POST triggers this path
+  validation:   fail — no validation between atoi() and memcpy()
+  api:          fail — memcpy() has no bounds protection
+  environment:  fail — no compiler/OS protection
+  impact:       pass — RCE
+```
 
 ---
 

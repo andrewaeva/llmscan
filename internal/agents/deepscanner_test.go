@@ -12,6 +12,147 @@ import (
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
+// ---- parseGateVerdict tests ----
+
+func TestParseGateVerdictWithGates(t *testing.T) {
+	in := `Analysis...
+{"verdict":"refuted","reason":"sanitized","fix":"",
+ "gates":{
+   "control":"pass","reachability":"pass",
+   "validation":"fail","validation_reason":"upstream allowlist",
+   "api_contract":"pass","environment":"pass","impact":"pass"
+ }}`
+	v, r, _, g, did := parseGateVerdict(in)
+	if v != "refuted" {
+		t.Errorf("verdict=%q", v)
+	}
+	if r != "sanitized" {
+		t.Errorf("reason=%q", r)
+	}
+	if g == nil || g.Validation != types.GateFail {
+		t.Errorf("gates=%+v", g)
+	}
+	if did {
+		t.Error("defense_in_depth should be false")
+	}
+}
+
+func TestParseGateVerdictWithFencesAndDefenseInDepth(t *testing.T) {
+	in := "Scratch.\n" +
+		"```json\n" +
+		`{"verdict":"confirmed","reason":"real but robustness","defense_in_depth":true,` +
+		`"gates":{"control":"pass","reachability":"pass","validation":"pass",` +
+		`"api_contract":"pass","environment":"pass","impact":"fail","impact_reason":"panic only"}}` +
+		"\n```"
+	v, _, _, g, did := parseGateVerdict(in)
+	if v != "confirmed" {
+		t.Errorf("verdict=%q", v)
+	}
+	if !did {
+		t.Error("defense_in_depth should be true")
+	}
+	if g == nil || g.Impact != types.GateFail {
+		t.Errorf("gates=%+v", g)
+	}
+}
+
+func TestParseGateVerdictNoGates(t *testing.T) {
+	in := `{"verdict":"confirmed","reason":"x"}`
+	v, _, _, g, did := parseGateVerdict(in)
+	if v != "confirmed" {
+		t.Errorf("verdict=%q", v)
+	}
+	if g != nil {
+		t.Errorf("expected nil gates; got %+v", g)
+	}
+	if did {
+		t.Error("defense_in_depth should default false")
+	}
+}
+
+func TestParseGateVerdictJSONWithEmbeddedBrace(t *testing.T) {
+	// Reason contains a literal '{' inside a string — should not throw off
+	// the brace matcher.
+	in := `{"verdict":"confirmed","reason":"saw '{' in source"}`
+	v, r, _, _, _ := parseGateVerdict(in)
+	if v != "confirmed" {
+		t.Errorf("verdict=%q", v)
+	}
+	if r != "saw '{' in source" {
+		t.Errorf("reason=%q", r)
+	}
+}
+
+func TestParseGateVerdictMultipleJSONObjects(t *testing.T) {
+	// First a draft, then the real one. Last balanced block wins.
+	in := `{"verdict":"draft"} more text {"verdict":"refuted","reason":"final"}`
+	v, r, _, _, _ := parseGateVerdict(in)
+	if v != "refuted" {
+		t.Errorf("verdict=%q", v)
+	}
+	if r != "final" {
+		t.Errorf("reason=%q", r)
+	}
+}
+
+func TestDeepAgentReconcilesVerdictWithGates(t *testing.T) {
+	// Even if the model put verdict="confirmed" in JSON, an API-contract
+	// FAIL should override that into "refuted".
+	sandbox, _ := tools.NewSandbox(t.TempDir())
+	final := `{
+		"verdict":"confirmed",
+		"reason":"draft conclusion",
+		"gates":{
+			"control":"pass","reachability":"pass",
+			"validation":"pass","api_contract":"fail","api_contract_reason":"prepared stmt",
+			"environment":"pass","impact":"pass"
+		}
+	}`
+	tc := &stubToolClient{toolResp: llm.ToolResponse{FinalText: final, Model: "m"}}
+	a := &DeepAgent{Client: tc, Sandbox: sandbox, Budget: 5, ModelName: "m"}
+	res := a.Verify(context.Background(), types.Finding{File: "x.go", StartLine: 1})
+	if res.Verdict != "refuted" {
+		t.Errorf("verdict reconciliation failed: %q", res.Verdict)
+	}
+	if res.Gates == nil || res.Gates.APIContract != types.GateFail {
+		t.Errorf("gates: %+v", res.Gates)
+	}
+}
+
+func TestDeepAgentDefenseInDepthFlagFromGates(t *testing.T) {
+	sandbox, _ := tools.NewSandbox(t.TempDir())
+	final := `{
+		"verdict":"confirmed",
+		"reason":"real but no impact",
+		"gates":{
+			"control":"pass","reachability":"pass","validation":"pass",
+			"api_contract":"pass","environment":"pass",
+			"impact":"fail","impact_reason":"panic only"
+		}
+	}`
+	tc := &stubToolClient{toolResp: llm.ToolResponse{FinalText: final, Model: "m"}}
+	a := &DeepAgent{Client: tc, Sandbox: sandbox, Budget: 5, ModelName: "m"}
+	res := a.Verify(context.Background(), types.Finding{File: "x.go", StartLine: 1})
+	if !res.DefenseInDepth {
+		t.Errorf("expected DefenseInDepth=true; got %+v", res)
+	}
+	if res.Verdict != "confirmed" {
+		t.Errorf("verdict=%q", res.Verdict)
+	}
+}
+
+func TestDeepSystemPromptHasGatesContract(t *testing.T) {
+	p := deepSystemPrompt()
+	for _, want := range []string{
+		"Control", "Reachability", "Validation", "APIContract", "Environment", "Impact",
+		"devils_advocate", "defense_in_depth",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("deep system prompt missing %q", want)
+		}
+	}
+}
+
 func TestParseVerdictTrailingJSON(t *testing.T) {
 	in := "Some prose explaining stuff.\n" +
 		`{"verdict":"confirmed","reason":"clear taint chain","fix":"escape input"}`

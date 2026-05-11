@@ -103,7 +103,10 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 	var verifier *agents.Verifier
 	if e.Cfg.IsAgentEnabled("verifier") {
 		if cl, err := llm.New(e.Cfg.ResolveModel("verifier")); err == nil {
-			verifier = &agents.Verifier{Client: cl}
+			verifier = &agents.Verifier{
+				Client:         cl,
+				PromptOverride: e.loadSpecialSkill("_fpcheck-verifier"),
+			}
 		} else {
 			e.logf("verifier disabled: %v", err)
 		}

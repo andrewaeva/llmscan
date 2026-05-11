@@ -29,6 +29,63 @@ func repoSkillsDir(t *testing.T) string {
 	return filepath.Join(root, "skills")
 }
 
+func TestLoadDirSkipsUnderscoreDirs(t *testing.T) {
+	dir := repoSkillsDir(t)
+	got, _ := LoadDir(dir)
+	for _, s := range got {
+		if filepath.Base(filepath.Dir(s.Path))[0] == '_' {
+			t.Errorf("LoadDir surfaced a special skill %q from %s", s.Name, s.Path)
+		}
+	}
+}
+
+func TestLoadSpecialFPCheckVerifier(t *testing.T) {
+	dir := repoSkillsDir(t)
+	sk, err := LoadSpecial(dir, "_fpcheck-verifier")
+	if err != nil {
+		t.Fatalf("LoadSpecial: %v", err)
+	}
+	if sk == nil {
+		t.Fatal("expected the _fpcheck-verifier skill to load")
+	}
+	if sk.Kind != "verifier" {
+		t.Errorf("kind=%q, want verifier", sk.Kind)
+	}
+	if sk.Prompt == "" {
+		t.Error("body must not be empty")
+	}
+}
+
+func TestLoadSpecialFPCheckDeep(t *testing.T) {
+	dir := repoSkillsDir(t)
+	sk, err := LoadSpecial(dir, "_fpcheck-deep")
+	if err != nil {
+		t.Fatalf("LoadSpecial: %v", err)
+	}
+	if sk == nil {
+		t.Fatal("expected the _fpcheck-deep skill to load")
+	}
+	if sk.Kind != "deep" {
+		t.Errorf("kind=%q, want deep", sk.Kind)
+	}
+}
+
+func TestLoadSpecialRejectsNonUnderscore(t *testing.T) {
+	if _, err := LoadSpecial(".", "injection"); err == nil {
+		t.Error("expected error for non-underscore dir name")
+	}
+}
+
+func TestLoadSpecialMissing(t *testing.T) {
+	sk, err := LoadSpecial(t.TempDir(), "_does-not-exist")
+	if err != nil {
+		t.Errorf("missing skill should not error: %v", err)
+	}
+	if sk != nil {
+		t.Errorf("missing skill should return nil, got %+v", sk)
+	}
+}
+
 func TestLoadAllSkills(t *testing.T) {
 	dir := repoSkillsDir(t)
 	got, errs := LoadDir(dir)

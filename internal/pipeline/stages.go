@@ -59,7 +59,9 @@ func (e *Engine) parseASTs(ctx context.Context, files []types.FileTarget) (map[s
 	return out, list
 }
 
-// loadSkills loads all enabled skills from configured directories.
+// loadSkills loads all enabled scanner skills from configured directories.
+// Special-purpose skills (folders prefixed with "_") are intentionally
+// excluded — fetch them with loadSpecialSkill.
 func (e *Engine) loadSkills() map[string]*skills.Skill {
 	out := map[string]*skills.Skill{}
 	for _, dir := range e.Cfg.Skills.Dirs {
@@ -72,6 +74,24 @@ func (e *Engine) loadSkills() map[string]*skills.Skill {
 		}
 	}
 	return out
+}
+
+// loadSpecialSkill resolves a special skill (folder starts with "_") across
+// every configured skills dir and returns the first prompt body it finds.
+// Returns "" when no skill is present, so callers can fall back to the
+// built-in default prompt.
+func (e *Engine) loadSpecialSkill(dirName string) string {
+	for _, dir := range e.Cfg.Skills.Dirs {
+		sk, err := skills.LoadSpecial(dir, dirName)
+		if err != nil {
+			e.logf("special skill %s in %s: %v", dirName, dir, err)
+			continue
+		}
+		if sk != nil && sk.Prompt != "" {
+			return sk.Prompt
+		}
+	}
+	return ""
 }
 
 // ---- Pre-filters and lightweight static analyses ----

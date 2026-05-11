@@ -29,6 +29,11 @@ type DeepResult struct {
 	Fix     string
 	Trace   []types.DeepToolCall
 	Model   string
+	// Gates is the optional six-gate review attached by the deep agent.
+	// Pipeline.deep merges this onto the original Finding when present.
+	Gates *types.GateReview
+	// DefenseInDepth is set when only Gate 6 (Impact) failed.
+	DefenseInDepth bool
 }
 
 // DeepAgent verifies a single finding by giving an LLM access to read-only
@@ -42,6 +47,9 @@ type DeepAgent struct {
 	Verbose   bool // log every tool call
 	Logf      func(format string, args ...any)
 	ModelName string // for trace + reporting
+	// PromptOverride, if non-empty, replaces deepSystemPrompt(). Used to
+	// swap in a skill-supplied prompt without rewiring the agent.
+	PromptOverride string
 }
 
 func (a *DeepAgent) logf(format string, args ...any) {
@@ -54,6 +62,8 @@ func (a *DeepAgent) logf(format string, args ...any) {
 // Verify investigates one finding and returns a DeepResult.
 // Network and tool errors do NOT make Verify return an error — they result
 // in Verdict="inconclusive" so the caller can keep the original finding.
+//
+//nolint:gocyclo // tool-loop + verdict reconciliation; flat is intentional
 func (a *DeepAgent) Verify(ctx context.Context, f types.Finding) DeepResult {
 	if a.Client == nil || a.Sandbox == nil {
 		return DeepResult{Verdict: "inconclusive", Reason: "deep agent not configured"}
@@ -64,6 +74,9 @@ func (a *DeepAgent) Verify(ctx context.Context, f types.Finding) DeepResult {
 	}
 
 	system := deepSystemPrompt()
+	if a.PromptOverride != "" {
+		system = a.PromptOverride
+	}
 	user := deepUserPrompt(f)
 
 	var trace []types.DeepToolCall
@@ -117,13 +130,37 @@ func (a *DeepAgent) Verify(ctx context.Context, f types.Finding) DeepResult {
 		return DeepResult{Verdict: "inconclusive", Reason: "llm error: " + err.Error(), Trace: trace, Model: a.ModelName}
 	}
 
-	verdict, reason, fix := parseVerdict(resp.FinalText)
+	verdict, reason, fix, gates, defenseInDepth := parseGateVerdict(resp.FinalText)
+	// Reconcile verdict with gate outcome (if any). Gate signals override
+	// the bare verdict string so we cannot end up with verdict=confirmed
+	// while validation/api/env clearly FAIL'd.
+	if gates != nil {
+		switch gates.Classify() {
+		case types.GateOutcomeRefutedDefended, types.GateOutcomeRefutedNoControl:
+			verdict = "refuted"
+			if r := gates.FirstFailingReason(); r != "" && reason == "" {
+				reason = r
+			}
+		case types.GateOutcomeConfirmed:
+			verdict = "confirmed"
+		case types.GateOutcomeDefenseInDepth:
+			// Real bug but lacking primary security impact. Keep verdict
+			// as confirmed-with-flag so the pipeline can downgrade rather
+			// than drop.
+			verdict = "confirmed"
+			defenseInDepth = true
+		case types.GateOutcomeInconclusive, types.GateOutcomeUnknown:
+			// leave verdict as parsed
+		}
+	}
 	return DeepResult{
-		Verdict: verdict,
-		Reason:  reason,
-		Fix:     fix,
-		Trace:   trace,
-		Model:   resp.Model,
+		Verdict:        verdict,
+		Reason:         reason,
+		Fix:            fix,
+		Trace:          trace,
+		Model:          resp.Model,
+		Gates:          gates,
+		DefenseInDepth: defenseInDepth,
 	}
 }
 
@@ -195,30 +232,90 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 
 // ---- prompts & tool schemas ----
 
+// deepSystemPrompt drives the optional --deep sub-agent that has read-only
+// tool access. The methodology is the Trail of Bits fp-check deep path:
+// Step 0 (frame the threat model) + 5 investigation phases + 13 devil's
+// advocate questions + the same six gates the standard verifier uses.
 func deepSystemPrompt() string {
-	return `You are a senior application security engineer verifying a candidate finding
-reported by a static-analysis sub-agent. You have read-only tools to inspect
-the codebase. Use them aggressively.
+	return `You are a senior application security engineer verifying ONE candidate
+finding for llmscan via the Trail-of-Bits fp-check deep-path methodology.
+You have read-only tools (read_file, grep, list_dir, git_blame). Use them.
 
-Workflow:
-  1. Read the cited range with read_file to see the surrounding context.
-  2. Use grep to follow tainted variables, sanitizers, helpers, and callers.
-  3. Open related files with read_file as needed to confirm or refute the
-     vulnerability end-to-end.
-  4. Be skeptical: if the finding is fenced by a sanitizer, framework
-     protection, dead code, or test scaffolding, REFUTE it.
-  5. Stop calling tools once you can decide. Do not over-investigate.
+Step 0 — Frame the threat model:
+  - What is the trust boundary the input must cross?
+  - Who is the attacker, and what do they control?
+  - What is the consequence if the bug is real?
 
-Output policy: when you are done, return a SINGLE JSON object on the LAST
-line of your reply with this exact shape (no markdown fences, no other text
-after it):
+Five investigation phases (run only the ones that apply, stop once you can
+decide; total budget is bounded by the host):
+  Phase 1: Read the cited range + immediate caller(s) to confirm shape.
+  Phase 2: Trace the data flow source → propagator → sink, hop by hop.
+  Phase 3: Hunt for upstream validation / sanitizer / framework auto-escape.
+  Phase 4: Audit the sink's contract — does the API itself defend?
+  Phase 5: Consider environment mitigations (compiler, OS, runtime, CSP).
 
-  {"verdict":"confirmed|refuted|inconclusive",
-   "reason":"<1-3 sentence rationale grounded in code you read>",
-   "fix":"<optional concrete remediation hint, may be empty>"}
+Six mandatory gates (each PASS / FAIL / N/A with a one-sentence reason):
+  1. Control       — attacker really controls the source?
+  2. Reachability  — sink reachable on a realistic execution path?
+  3. Validation    — upstream validation blocks exploitation?
+  4. APIContract   — sink API is self-defending?
+  5. Environment   — runtime/compiler/OS mitigates the issue?
+  6. Impact        — real security impact (RCE/exfil/privesc) vs robustness?
 
-You may include a brief plain-text rationale above the JSON if you wish, but
-the JSON object on the final line is mandatory and parsed automatically.`
+Verdict rules (apply in order):
+  - Gate 3/4/5 = FAIL ⇒ verdict="refuted" (upstream defense).
+  - Gate 1/2 = FAIL ⇒ verdict="refuted" (no control / unreachable).
+  - Gate 6 = FAIL only ⇒ verdict="confirmed" but defense_in_depth=true.
+  - All gates PASS (or PASS with some N/A) ⇒ verdict="confirmed".
+  - Otherwise ⇒ verdict="inconclusive".
+
+Thirteen devil's-advocate questions to consider (list the ones that fired in
+"devils_advocate"; keep each item short):
+  1. Pattern bias — flagging because it "looks like" a known bug?
+  2. Trust assumption — assumed an unverified caller is trusted?
+  3. Mathematical proof — verified bounds/sizes, not just glanced at them?
+  4. Defense-in-depth vs primary control confusion?
+  5. Hallucination — invented code/sanitizers/APIs not in the repo?
+  6. False-negative protection — would dismissing this miss a real bug?
+  7. Cross-component reach — did I follow every caller path?
+  8. Race / concurrency — could the check-then-use be raced?
+  9. Logic vs spec — does the code violate a documented invariant?
+ 10. Test scaffolding — is this dead in production?
+ 11. Configuration drift — does default config make this reachable?
+ 12. Supply-chain — does an external dep silently disable a guard?
+ 13. Variant — does the same antipattern repeat nearby (variant analysis)?
+
+Rationalizations to REJECT — never use these as a reason to refute:
+  - "rapid analysis", "skipping for efficiency"
+  - "pattern looks dangerous, must be real"
+  - "similar code was vulnerable elsewhere"
+  - "this is clearly critical, no need to verify"
+
+Output policy: return a SINGLE JSON object on the LAST line of your reply
+(no markdown fences after it). You may include short plain-text scratch
+above it. Required shape:
+
+  {
+    "verdict": "confirmed|refuted|inconclusive",
+    "reason":  "1-3 sentences grounded in code you read",
+    "fix":     "optional concrete remediation hint",
+    "defense_in_depth": true|false,
+    "gates": {
+      "control":            "pass|fail|n/a",
+      "control_reason":     "...",
+      "reachability":       "pass|fail|n/a",
+      "reachability_reason":"...",
+      "validation":         "pass|fail|n/a",
+      "validation_reason":  "...",
+      "api_contract":       "pass|fail|n/a",
+      "api_contract_reason":"...",
+      "environment":        "pass|fail|n/a",
+      "environment_reason": "...",
+      "impact":             "pass|fail|n/a",
+      "impact_reason":      "..."
+    },
+    "devils_advocate": ["...","..."]
+  }`
 }
 
 func deepUserPrompt(f types.Finding) string {
@@ -319,26 +416,38 @@ func shortFile(p string) string {
 }
 
 // parseVerdict extracts the JSON verdict from the model's final message.
-// It tolerates leading prose and code fences.
+// It tolerates leading prose and code fences. Retained for backwards-
+// compatible callers; new code should prefer parseGateVerdict.
 func parseVerdict(text string) (verdict, reason, fix string) {
+	verdict, reason, fix, _, _ = parseGateVerdict(text)
+	return verdict, reason, fix
+}
+
+// parseGateVerdict is parseVerdict + the optional gates payload introduced
+// by the fp-check methodology. Returns (verdict, reason, fix, gates,
+// defenseInDepth). gates is nil when no gate fields were emitted.
+//
+// The locator is tolerant of:
+//   - extra prose before the JSON ("Analysis...\n{...}")
+//   - markdown fences (```json … ```)
+//   - the JSON appearing anywhere as long as the LAST top-level "{...}" of
+//     the message decodes successfully.
+func parseGateVerdict(text string) (verdict, reason, fix string, gates *types.GateReview, defenseInDepth bool) {
 	text = strings.TrimSpace(text)
-	// Find the last '{' and parse until matching '}'.
-	start := strings.LastIndex(text, "{")
-	if start < 0 {
-		return "inconclusive", strings.TrimSpace(text), ""
-	}
-	jsonPart := text[start:]
-	// Strip trailing fences/text after the JSON.
-	if end := strings.LastIndex(jsonPart, "}"); end >= 0 {
-		jsonPart = jsonPart[:end+1]
+	jsonPart, ok := extractLastJSONObject(text)
+	if !ok {
+		return "inconclusive", strings.TrimSpace(text), "", nil, false
 	}
 	var v struct {
-		Verdict string `json:"verdict"`
-		Reason  string `json:"reason"`
-		Fix     string `json:"fix"`
+		Verdict        string             `json:"verdict"`
+		Reason         string             `json:"reason"`
+		Fix            string             `json:"fix"`
+		DefenseInDepth bool               `json:"defense_in_depth"`
+		Gates          *verifierGatesJSON `json:"gates,omitempty"`
+		Devils         []string           `json:"devils_advocate,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(jsonPart), &v); err != nil {
-		return "inconclusive", strings.TrimSpace(text), ""
+		return "inconclusive", strings.TrimSpace(text), "", nil, false
 	}
 	verdict = strings.ToLower(strings.TrimSpace(v.Verdict))
 	switch verdict {
@@ -346,7 +455,50 @@ func parseVerdict(text string) (verdict, reason, fix string) {
 	default:
 		verdict = "inconclusive"
 	}
-	return verdict, strings.TrimSpace(v.Reason), strings.TrimSpace(v.Fix)
+	gates = buildGateReview(v.Gates, v.Devils)
+	return verdict, strings.TrimSpace(v.Reason), strings.TrimSpace(v.Fix), gates, v.DefenseInDepth
+}
+
+// extractLastJSONObject finds the rightmost balanced {...} block in s. It
+// scans backwards from the last '}' and pairs braces while respecting JSON
+// strings (so a literal '{' inside a "..." string does not throw off the
+// match). Returns ("", false) when no balanced block is found.
+func extractLastJSONObject(s string) (string, bool) {
+	end := strings.LastIndex(s, "}")
+	if end < 0 {
+		return "", false
+	}
+	depth := 0
+	inStr := false
+	escape := false
+	for i := end; i >= 0; i-- {
+		c := s[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inStr = !inStr
+			continue
+		}
+		if inStr {
+			continue
+		}
+		switch c {
+		case '}':
+			depth++
+		case '{':
+			depth--
+			if depth == 0 {
+				return s[i : end+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 func oneLine(s string) string {

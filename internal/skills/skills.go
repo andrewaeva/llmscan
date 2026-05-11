@@ -57,6 +57,11 @@ func (s *Skill) IsEnabled() bool {
 
 // LoadDir loads every SKILL.md found under root (recursive). Files that fail
 // to parse are reported with their path; loading continues for the rest.
+//
+// Directories whose name starts with "_" are skipped. This is the registry
+// escape hatch for special-purpose prompts (e.g. _fpcheck-verifier,
+// _fpcheck-deep) that should not be exposed as scanner skills. Use
+// LoadSpecial to fetch them by directory name.
 func LoadDir(root string) ([]*Skill, []error) {
 	var skills []*Skill
 	var errs []error
@@ -65,6 +70,9 @@ func LoadDir(root string) ([]*Skill, []error) {
 			return nil
 		}
 		if d.IsDir() {
+			if p != root && strings.HasPrefix(d.Name(), "_") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.EqualFold(filepath.Base(p), "SKILL.md") {
@@ -79,6 +87,24 @@ func LoadDir(root string) ([]*Skill, []error) {
 		return nil
 	})
 	return skills, errs
+}
+
+// LoadSpecial loads a SKILL.md whose containing folder starts with "_". These
+// are excluded from the regular registry (LoadDir skips them) so they don't
+// pollute the scanner DAG. Returns (nil, nil) when the file is absent, so
+// callers can treat the special skill as optional. Returns an error only on
+// genuine parse failures.
+func LoadSpecial(root, dirName string) (*Skill, error) {
+	if !strings.HasPrefix(dirName, "_") {
+		return nil, fmt.Errorf("LoadSpecial: %q must start with underscore", dirName)
+	}
+	path := filepath.Join(root, dirName, "SKILL.md")
+	if _, err := os.Stat(path); err != nil {
+		// Missing is not an error — let the caller fall back to the
+		// built-in default prompt.
+		return nil, nil //nolint:nilnil // optional skill, absence is fine
+	}
+	return LoadFile(path)
 }
 
 // LoadFile parses one SKILL.md file.

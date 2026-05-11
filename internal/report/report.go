@@ -142,6 +142,12 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		dc := oneLine(f.DeepComment)
 		fmt.Fprintf(w, "%s %s (%s, %d tool calls)\n", label("deep:"), dc, vc, len(f.DeepTrace))
 	}
+	if f.Gates != nil && f.Gates.AnyEvaluated() {
+		writeGates(w, p, label, f.Gates)
+	}
+	if f.DefenseInDepth {
+		fmt.Fprintf(w, "%s %s\n", label("note:"), p.yellow("defense-in-depth — bug is real but lacks security impact"))
+	}
 	if f.SuggestedFix != "" {
 		fmt.Fprintf(w, "%s %s\n", label("fix:"), p.green(oneLine(f.SuggestedFix)))
 	}
@@ -151,6 +157,62 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 			fmt.Fprintf(w, "    %s\n", p.dim("│ ")+l)
 		}
 	}
+}
+
+// writeGates renders the fp-check six-gate review block.
+//
+//	gates:
+//	  control:      pass — attacker controls Content-Length
+//	  reachability: pass — any POST hits this path
+//	  validation:   fail — no length check before memcpy
+//	  api:          fail — memcpy is unsafe by contract
+//	  environment:  fail — no compiler/OS mitigation
+//	  impact:       pass — RCE
+//
+// pass = green, fail = red (defending) / bold-red (refuting), n/a = dim.
+func writeGates(w io.Writer, p palette, label func(string) string, g *types.GateReview) {
+	fmt.Fprintf(w, "%s\n", label("gates:"))
+	rows := []struct {
+		name string
+		gate types.Gate
+		why  string
+	}{
+		{"control", g.Control, g.ControlReason},
+		{"reachability", g.Reachability, g.ReachabilityReason},
+		{"validation", g.Validation, g.ValidationReason},
+		{"api", g.APIContract, g.APIContractReason},
+		{"environment", g.Environment, g.EnvironmentReason},
+		{"impact", g.Impact, g.ImpactReason},
+	}
+	for _, r := range rows {
+		if r.gate == types.GateUnknown && r.why == "" {
+			continue
+		}
+		status := gateLabel(p, r.gate)
+		line := fmt.Sprintf("    %-13s %s", r.name+":", status)
+		if r.why != "" {
+			line += " " + p.dim("—") + " " + oneLine(r.why)
+		}
+		fmt.Fprintln(w, line)
+	}
+	if len(g.DevilsAdvocate) > 0 {
+		fmt.Fprintf(w, "    %s\n", p.dim("devil's advocate:"))
+		for _, item := range g.DevilsAdvocate {
+			fmt.Fprintf(w, "      %s %s\n", p.dim("·"), oneLine(item))
+		}
+	}
+}
+
+func gateLabel(p palette, g types.Gate) string {
+	switch g {
+	case types.GatePass:
+		return p.green("pass")
+	case types.GateFail:
+		return p.red("fail")
+	case types.GateNotApp:
+		return p.dim("n/a")
+	}
+	return p.dim("?")
 }
 
 func oneLine(s string) string {
@@ -199,7 +261,8 @@ func WriteSARIF(w io.Writer, r types.Report) error {
 		Message struct {
 			Text string `json:"text"`
 		} `json:"message"`
-		Locations []loc `json:"locations"`
+		Locations  []loc          `json:"locations"`
+		Properties map[string]any `json:"properties,omitempty"`
 	}
 	type rule struct {
 		ID               string `json:"id"`
@@ -256,6 +319,14 @@ func WriteSARIF(w io.Writer, r types.Report) error {
 		l.PhysicalLocation.Region.StartLine = max1(f.StartLine, 1)
 		l.PhysicalLocation.Region.EndLine = max1(f.EndLine, f.StartLine)
 		res.Locations = []loc{l}
+		if f.Gates != nil && f.Gates.AnyEvaluated() {
+			res.Properties = map[string]any{"gates": f.Gates}
+			if f.DefenseInDepth {
+				res.Properties["defense_in_depth"] = true
+			}
+		} else if f.DefenseInDepth {
+			res.Properties = map[string]any{"defense_in_depth": true}
+		}
 		r1.Results = append(r1.Results, res)
 	}
 	for _, rl := range ruleSet {

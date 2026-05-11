@@ -135,6 +135,31 @@ reason:
 PRs with broad `//nolint` directives or with `nolintlint` flagging unused
 suppressions will be rejected.
 
+## Modifying the verifier / deepscanner prompts
+
+The Verifier (standard path) and DeepAgent (deep path) implement the
+Trail-of-Bits six-gate fp-check methodology. Any change to these prompts —
+whether to the in-Go strings in `internal/agents/agents.go` /
+`internal/agents/deepscanner.go` or to the skill bodies in
+`skills/_fpcheck-verifier/SKILL.md` / `skills/_fpcheck-deep/SKILL.md` —
+**must preserve** the following:
+
+- The six gates (Control, Reachability, Validation, APIContract, Environment,
+  Impact) with explicit pass/fail/n-a status plus a per-gate reason field.
+- The verdict-derivation order: Validation/API/Environment fail → FP first;
+  Control/Reachability fail → FP second; Impact-only fail → defense-in-depth;
+  all pass → TP; otherwise inconclusive.
+- The Devil's-Advocate question list (7 items for the standard path, 13 for
+  the deep path).
+- The explicit "rationalizations to reject" list.
+- The JSON output schema with the `gates` block — `internal/types/gates.go`
+  consumes that exact shape and the gate-tests in
+  `internal/types/gates_test.go`, `internal/agents/verifier_test.go`, and
+  `internal/agents/deepscanner_test.go` will catch silent drift.
+
+When in doubt: run `go test ./internal/types/... ./internal/agents/...` and
+make sure the gate-classification tests still pass before opening the PR.
+
 ## LLM costs and the `--deep` mode
 
 The deep sub-agent pass costs real API tokens. When writing or reviewing
