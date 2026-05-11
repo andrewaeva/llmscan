@@ -137,6 +137,9 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		}
 	}
 	attachTraces(final, taintTraces)
+	// Optional sub-agent deep pass runs BEFORE dropByPolicy so that findings
+	// the deep agent refutes are filtered out via the standard FP path.
+	final = e.runDeepPass(ctx, target, cdb, final)
 	final = e.dropByPolicy(final, &report)
 	final = e.applyBaseline(cdb, final)
 

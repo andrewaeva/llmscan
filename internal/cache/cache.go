@@ -82,6 +82,11 @@ func (d *DB) migrate() error {
 			finding_json TEXT NOT NULL,
 			created_at   INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS deep_tool_cache (
+			key         TEXT PRIMARY KEY,
+			payload     BLOB NOT NULL,
+			created_at  INTEGER NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {

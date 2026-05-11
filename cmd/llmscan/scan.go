@@ -39,6 +39,13 @@ type scanFlags struct {
 	cachePath                                    string
 	noCache                                      bool
 	color                                        string
+
+	// --deep sub-agent verification pass.
+	deep                                   bool
+	deepSeverity                           string
+	deepMaxHotspots, deepBudget, deepConc  int
+	deepModel, deepProvider                string
+	deepNoCache                            bool
 }
 
 func scanCmd() *cobra.Command {
@@ -143,4 +150,14 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().BoolVar(&f.noFPFilter, "no-fp-filter", false, "Skip the LLM false-positive filter (deterministic dedup still runs)")
 	cmd.Flags().BoolVar(&f.fast, "fast", false, "Speed preset: no-orchestrator + no-verifier + no-fp-filter + concurrency=16")
 	cmd.Flags().StringVar(&f.color, "color", "auto", "Color output for text format: auto | always | never (honors NO_COLOR, CLICOLOR_FORCE)")
+
+	// --deep sub-agent verification (Anthropic only at the moment).
+	cmd.Flags().BoolVar(&f.deep, "deep", false, "Run a sub-agent verification pass over high-severity findings (Anthropic only)")
+	cmd.Flags().StringVar(&f.deepSeverity, "deep-severity", "", "Min severity that triggers deep verification: critical | high | medium (default: high)")
+	cmd.Flags().IntVar(&f.deepMaxHotspots, "deep-max-hotspots", 0, "Cap on findings inspected by the sub-agent (default 20)")
+	cmd.Flags().IntVar(&f.deepBudget, "deep-budget", 0, "Max tool calls per hotspot (default 40)")
+	cmd.Flags().IntVar(&f.deepConc, "deep-concurrency", 0, "Parallel sub-agents (default 4)")
+	cmd.Flags().StringVar(&f.deepModel, "deep-model", "", "Override model id for the sub-agent (default: --model)")
+	cmd.Flags().StringVar(&f.deepProvider, "deep-provider", "", "Override provider for the sub-agent (default: --provider; only 'anthropic' supports tools)")
+	cmd.Flags().BoolVar(&f.deepNoCache, "deep-no-cache", false, "Disable sqlite caching of sub-agent tool outputs (cached by default)")
 }

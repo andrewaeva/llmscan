@@ -128,6 +128,19 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		}
 		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLine(f.VerifierComment), vc)
 	}
+	if f.DeepVerified {
+		vc := p.gray(f.DeepVerdict)
+		switch strings.ToLower(f.DeepVerdict) {
+		case "confirmed":
+			vc = p.red(f.DeepVerdict)
+		case "refuted":
+			vc = p.green(f.DeepVerdict)
+		case "inconclusive":
+			vc = p.yellow(f.DeepVerdict)
+		}
+		dc := oneLine(f.DeepComment)
+		fmt.Fprintf(w, "%s %s (%s, %d tool calls)\n", label("deep:"), dc, vc, len(f.DeepTrace))
+	}
 	if f.SuggestedFix != "" {
 		fmt.Fprintf(w, "%s %s\n", label("fix:"), p.green(oneLine(f.SuggestedFix)))
 	}

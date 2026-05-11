@@ -97,6 +97,23 @@ type BaselineConfig struct {
 	Write bool   `yaml:"write,omitempty"` // overwrite baseline with current findings
 }
 
+// DeepConfig controls the optional sub-agent (--deep) pass that verifies and
+// deepens high-severity findings via tool-driven inspection of the codebase.
+//
+// Disabled by default. When enabled, runs after the regular pipeline and only
+// against findings at or above MinSeverity, capped at MaxHotspots.
+type DeepConfig struct {
+	Enabled      bool   `yaml:"enabled,omitempty"`
+	MinSeverity  string `yaml:"min_severity,omitempty"`  // critical | high | medium
+	MaxHotspots  int    `yaml:"max_hotspots,omitempty"`  // hard cap; default 20
+	Budget       int    `yaml:"budget,omitempty"`        // max tool calls per hotspot; default 40
+	Concurrency  int    `yaml:"concurrency,omitempty"`   // parallel sub-agents; default 4
+	Cache        bool   `yaml:"cache,omitempty"`         // cache tool outputs in sqlite; default true
+	Model        string `yaml:"model,omitempty"`         // override LLM model id (empty = use default)
+	Provider     string `yaml:"provider,omitempty"`      // override provider (empty = use default)
+	MaxFileBytes int    `yaml:"max_file_bytes,omitempty"` // sandbox guard; default 512 KiB
+}
+
 // Config is the full configuration tree.
 type Config struct {
 	// Default model used when an agent does not override it.
@@ -116,6 +133,7 @@ type Config struct {
 	Diff      DiffConfig      `yaml:"diff"`
 	Cache     CacheConfig     `yaml:"cache"`
 	Baseline  BaselineConfig  `yaml:"baseline"`
+	Deep      DeepConfig      `yaml:"deep"`
 
 	// Free-form context that gets injected into agent prompts.
 	ProjectContext string `yaml:"project_context,omitempty"`
@@ -179,6 +197,15 @@ func Default() Config {
 		Cache: CacheConfig{
 			Enabled: true,
 			Path:    ".llmscan/cache.db",
+		},
+		Deep: DeepConfig{
+			Enabled:      false,
+			MinSeverity:  "high",
+			MaxHotspots:  20,
+			Budget:       40,
+			Concurrency:  4,
+			Cache:        true,
+			MaxFileBytes: 512 * 1024,
 		},
 		Scan: ScanConfig{
 			MaxFileBytes:   256 * 1024,

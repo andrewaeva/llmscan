@@ -49,6 +49,34 @@ func applyFlagOverrides(cfg *config.Config, f *scanFlags) {
 	applyPrecisionOverrides(cfg, f)
 	applyIOOverrides(cfg, f)
 	applySpeedOverrides(cfg, f)
+	applyDeepOverrides(cfg, f)
+}
+
+func applyDeepOverrides(cfg *config.Config, f *scanFlags) {
+	if f.deep {
+		cfg.Deep.Enabled = true
+	}
+	if f.deepSeverity != "" {
+		cfg.Deep.MinSeverity = strings.ToLower(f.deepSeverity)
+	}
+	if f.deepMaxHotspots > 0 {
+		cfg.Deep.MaxHotspots = f.deepMaxHotspots
+	}
+	if f.deepBudget > 0 {
+		cfg.Deep.Budget = f.deepBudget
+	}
+	if f.deepConc > 0 {
+		cfg.Deep.Concurrency = f.deepConc
+	}
+	if f.deepModel != "" {
+		cfg.Deep.Model = f.deepModel
+	}
+	if f.deepProvider != "" {
+		cfg.Deep.Provider = f.deepProvider
+	}
+	if f.deepNoCache {
+		cfg.Deep.Cache = false
+	}
 }
 
 func applyModelOverrides(cfg *config.Config, f *scanFlags) {

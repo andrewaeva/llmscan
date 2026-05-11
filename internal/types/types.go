@@ -72,7 +72,26 @@ type Finding struct {
 	VoteCount int `json:"vote_count,omitempty"`
 	VoteTotal int `json:"vote_total,omitempty"`
 
+	// DeepVerified is true when a sub-agent (--deep) confirmed or refuted this
+	// finding via tool-driven inspection of the codebase.
+	DeepVerified bool           `json:"deep_verified,omitempty"`
+	DeepVerdict  string         `json:"deep_verdict,omitempty"` // confirmed | refuted | inconclusive
+	DeepComment  string         `json:"deep_comment,omitempty"`
+	DeepModel    string         `json:"deep_model,omitempty"`
+	DeepTrace    []DeepToolCall `json:"deep_trace,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// DeepToolCall is one step of a sub-agent's investigation (one tool invocation
+// and its result, truncated for the trace).
+type DeepToolCall struct {
+	Step   int    `json:"step"`
+	Tool   string `json:"tool"`
+	Args   string `json:"args"`              // compact JSON
+	Result string `json:"result,omitempty"`  // truncated to ~512 chars
+	Error  string `json:"error,omitempty"`
+	Ms     int64  `json:"ms"`
 }
 
 // TraceHop is one hop in a taint trace.
