@@ -38,6 +38,7 @@ type scanFlags struct {
 	jsonRetries                                  int
 	cachePath                                    string
 	noCache                                      bool
+	color                                        string
 }
 
 func scanCmd() *cobra.Command {
@@ -78,7 +79,7 @@ func runScan(target string, f *scanFlags) error {
 	}
 	defer closeOut()
 
-	if err := writeReport(out, rep, f.format); err != nil {
+	if err := writeReport(out, rep, f.format, f.color); err != nil {
 		return err
 	}
 	if f.failOn != "" && shouldFail(rep, f.failOn) {
@@ -87,14 +88,14 @@ func runScan(target string, f *scanFlags) error {
 	return nil
 }
 
-func writeReport(out *os.File, rep types.Report, format string) error {
+func writeReport(out *os.File, rep types.Report, format, color string) error {
 	switch strings.ToLower(format) {
 	case "json":
 		return report.WriteJSON(out, rep)
 	case "sarif":
 		return report.WriteSARIF(out, rep)
 	default:
-		return report.WriteText(out, rep)
+		return report.WriteTextWith(out, rep, report.ParseColorMode(color))
 	}
 }
 
@@ -141,4 +142,5 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().BoolVar(&f.noVerifier, "no-verifier", false, "Skip the per-finding verifier pass (saves N LLM calls)")
 	cmd.Flags().BoolVar(&f.noFPFilter, "no-fp-filter", false, "Skip the LLM false-positive filter (deterministic dedup still runs)")
 	cmd.Flags().BoolVar(&f.fast, "fast", false, "Speed preset: no-orchestrator + no-verifier + no-fp-filter + concurrency=16")
+	cmd.Flags().StringVar(&f.color, "color", "auto", "Color output for text format: auto | always | never (honors NO_COLOR, CLICOLOR_FORCE)")
 }

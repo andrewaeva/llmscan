@@ -19,33 +19,48 @@ func WriteJSON(w io.Writer, r types.Report) error {
 	return enc.Encode(r)
 }
 
-// WriteText emits a human-readable summary.
+// WriteText emits a human-readable summary. Coloring is auto-detected from
+// the writer (TTY + NO_COLOR/CLICOLOR_FORCE env). Use WriteTextWith to force
+// a specific ColorMode.
 func WriteText(w io.Writer, r types.Report) error {
-	fmt.Fprintf(w, "llmscan report\n")
-	fmt.Fprintf(w, "target:        %s\n", r.Target)
-	fmt.Fprintf(w, "duration:      %s\n", r.FinishedAt.Sub(r.StartedAt).Round(time.Millisecond))
-	fmt.Fprintf(w, "files scanned: %d\n", r.FilesScanned)
-	fmt.Fprintf(w, "raw=%d  dedup=%d  verified=%d  fp=%d  final=%d\n",
-		r.Stats.Raw, r.Stats.AfterDedup, r.Stats.AfterVerify, r.Stats.FalsePos, len(r.Findings))
+	return WriteTextWith(w, r, ColorAuto)
+}
+
+// WriteTextWith emits a human-readable summary, with explicit color control.
+func WriteTextWith(w io.Writer, r types.Report, mode ColorMode) error {
+	p := palette{on: resolveColor(w, mode)}
+
+	// Header banner.
+	fmt.Fprintf(w, "%s\n", p.bold(p.cyan("━━ llmscan report ━━")))
+	fmt.Fprintf(w, "%s %s\n", p.dim("target:       "), r.Target)
+	fmt.Fprintf(w, "%s %s\n", p.dim("duration:     "), r.FinishedAt.Sub(r.StartedAt).Round(time.Millisecond))
+	fmt.Fprintf(w, "%s %d\n", p.dim("files scanned:"), r.FilesScanned)
+	fmt.Fprintf(w, "%s raw=%d dedup=%d verified=%d fp=%d %s=%d\n",
+		p.dim("pipeline:     "),
+		r.Stats.Raw, r.Stats.AfterDedup, r.Stats.AfterVerify, r.Stats.FalsePos,
+		p.bold("final"), len(r.Findings))
 
 	if len(r.Stats.BySeverity) > 0 {
-		fmt.Fprintf(w, "\nby severity:\n")
+		fmt.Fprintf(w, "\n%s\n", p.bold("by severity:"))
 		keys := []string{"critical", "high", "medium", "low", "info"}
 		for _, k := range keys {
-			if v, ok := r.Stats.BySeverity[k]; ok && v > 0 {
-				fmt.Fprintf(w, "  %-8s %d\n", k, v)
+			v, ok := r.Stats.BySeverity[k]
+			if !ok || v == 0 {
+				continue
 			}
+			badge := p.sevBadge(types.Severity(k))
+			fmt.Fprintf(w, "  %s %s\n", badge, p.bold(fmt.Sprintf("%d", v)))
 		}
 	}
 	if len(r.Stats.ByAgent) > 0 {
-		fmt.Fprintf(w, "\nby agent:\n")
+		fmt.Fprintf(w, "\n%s\n", p.bold("by agent:"))
 		keys := make([]string, 0, len(r.Stats.ByAgent))
 		for k := range r.Stats.ByAgent {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(w, "  %-15s %d\n", k, r.Stats.ByAgent[k])
+			fmt.Fprintf(w, "  %s %d\n", p.cyan(fmt.Sprintf("%-15s", k)), r.Stats.ByAgent[k])
 		}
 	}
 
@@ -62,45 +77,66 @@ func WriteText(w io.Writer, r types.Report) error {
 		return sorted[i].StartLine < sorted[j].StartLine
 	})
 
-	fmt.Fprintf(w, "\nfindings:\n")
+	fmt.Fprintf(w, "\n%s\n", p.bold(fmt.Sprintf("findings (%d):", len(sorted))))
 	if len(sorted) == 0 {
-		fmt.Fprintf(w, "  (none)\n")
+		fmt.Fprintf(w, "  %s\n", p.green("(none — clean run)"))
 		return nil
 	}
-	for _, f := range sorted {
-		fp := ""
-		if f.FalsePositive {
-			fp = " [FP]"
-		}
-		fmt.Fprintf(w, "\n- [%s/%s] %s%s\n", strings.ToUpper(string(f.Severity)), f.Confidence, f.Title, fp)
-		fmt.Fprintf(w, "  agent:     %s\n", f.Agent)
-		fmt.Fprintf(w, "  location:  %s:%d-%d\n", f.File, f.StartLine, f.EndLine)
-		if f.RuleID != "" {
-			fmt.Fprintf(w, "  rule_id:   %s\n", f.RuleID)
-		}
-		if f.CWE != "" {
-			fmt.Fprintf(w, "  cwe:       %s\n", f.CWE)
-		}
-		if f.OWASP != "" {
-			fmt.Fprintf(w, "  owasp:     %s\n", f.OWASP)
-		}
-		if f.Description != "" {
-			fmt.Fprintf(w, "  why:       %s\n", oneLine(f.Description))
-		}
-		if f.VerifierComment != "" {
-			fmt.Fprintf(w, "  verifier:  %s (%s)\n", oneLine(f.VerifierComment), f.VerifierVerdict)
-		}
-		if f.SuggestedFix != "" {
-			fmt.Fprintf(w, "  fix:       %s\n", oneLine(f.SuggestedFix))
-		}
-		if f.CodeSample != "" {
-			fmt.Fprintf(w, "  sample:\n")
-			for _, l := range strings.Split(f.CodeSample, "\n") {
-				fmt.Fprintf(w, "    %s\n", l)
-			}
-		}
+	for i, f := range sorted {
+		writeFinding(w, p, i+1, f)
 	}
 	return nil
+}
+
+func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
+	fp := ""
+	if f.FalsePositive {
+		fp = " " + p.gray("[FP]")
+	}
+	num := p.dim(fmt.Sprintf("#%d", idx))
+	badge := p.sevBadge(f.Severity)
+	conf := p.confColor(string(f.Confidence))
+	title := p.bold(f.Title)
+	fmt.Fprintf(w, "\n%s %s %s %s%s\n",
+		num, badge, p.dim("conf=")+conf, title, fp)
+
+	loc := fmt.Sprintf("%s:%d-%d", f.File, f.StartLine, f.EndLine)
+	label := func(k string) string { return p.dim(fmt.Sprintf("  %-9s", k)) }
+
+	fmt.Fprintf(w, "%s %s\n", label("agent:"), p.magenta(f.Agent))
+	fmt.Fprintf(w, "%s %s\n", label("location:"), p.cyan(loc))
+	if f.RuleID != "" {
+		fmt.Fprintf(w, "%s %s\n", label("rule_id:"), f.RuleID)
+	}
+	if f.CWE != "" {
+		fmt.Fprintf(w, "%s %s\n", label("cwe:"), p.yellow(f.CWE))
+	}
+	if f.OWASP != "" {
+		fmt.Fprintf(w, "%s %s\n", label("owasp:"), p.yellow(f.OWASP))
+	}
+	if f.Description != "" {
+		fmt.Fprintf(w, "%s %s\n", label("why:"), oneLine(f.Description))
+	}
+	if f.VerifierComment != "" {
+		verdict := f.VerifierVerdict
+		vc := p.gray(verdict)
+		switch strings.ToLower(string(verdict)) {
+		case "true_positive", "tp", "confirmed":
+			vc = p.red(string(verdict))
+		case "false_positive", "fp":
+			vc = p.green(string(verdict))
+		}
+		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLine(f.VerifierComment), vc)
+	}
+	if f.SuggestedFix != "" {
+		fmt.Fprintf(w, "%s %s\n", label("fix:"), p.green(oneLine(f.SuggestedFix)))
+	}
+	if f.CodeSample != "" {
+		fmt.Fprintf(w, "%s\n", label("sample:"))
+		for _, l := range strings.Split(f.CodeSample, "\n") {
+			fmt.Fprintf(w, "    %s\n", p.dim("│ ")+l)
+		}
+	}
 }
 
 func oneLine(s string) string {
