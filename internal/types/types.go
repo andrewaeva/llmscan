@@ -156,6 +156,9 @@ type TraceHop struct {
 	Line int    `json:"line"`
 	Kind string `json:"kind"` // source | propagator | sanitizer | sink
 	Code string `json:"code,omitempty"`
+	// Note carries a short human-readable annotation for this hop (e.g.
+	// the guard kind that surrounds it, or the sanitizer id that fired).
+	Note string `json:"note,omitempty"`
 }
 
 // FileTarget represents a file (or chunk) ready to be analyzed.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
+	"github.com/andrewaeva/llmscan/internal/sanitizers"
 	"github.com/andrewaeva/llmscan/internal/watchlist"
 )
 
@@ -25,6 +26,9 @@ type SanitizerRef struct {
 	Kind  string
 	Match string
 	Line  int
+	// ID is the framework-aware sanitizer database id when the match
+	// originated from internal/sanitizers (empty for watchlist matches).
+	ID string `json:"id,omitempty"`
 }
 
 // ParamFlow describes how one parameter of a function flows through its body.
@@ -34,6 +38,15 @@ type ParamFlow struct {
 	FlowsTo       []SinkRef
 	Sanitized     []SanitizerRef
 	ReturnedTaint bool // true if a tainted param value leaves the function via `return`
+
+	// GuardedFlowsTo are sinks reached only along paths that go through a
+	// validator/guard scope. Callers should treat these as low-confidence
+	// signals (severity / confidence downgrade) rather than as canonical
+	// taint flows.
+	GuardedFlowsTo []SinkRef `json:"guarded_flows_to,omitempty"`
+	// GuardSanitizers records sanitizers from the framework-aware database
+	// that were active on the guarded sub-path.
+	GuardSanitizers []SanitizerRef `json:"guard_sanitizers,omitempty"`
 }
 
 // CallSiteFlow records a call from this function to another, with the indices
@@ -72,6 +85,12 @@ type FunctionSummary struct {
 // BuildSummaries scans every parsed file and returns a summary per declared
 // function/method node. The keys are callgraph NodeIDs.
 func BuildSummaries(files []*ast.FileAST, cg *callgraph.CallGraph) map[callgraph.NodeID]*FunctionSummary {
+	db, _ := sanitizers.LoadDefault()
+	return BuildSummariesWithDB(files, cg, db)
+}
+
+// BuildSummariesWithDB is BuildSummaries with an explicit sanitizer DB.
+func BuildSummariesWithDB(files []*ast.FileAST, cg *callgraph.CallGraph, db *sanitizers.DB) map[callgraph.NodeID]*FunctionSummary {
 	out := map[callgraph.NodeID]*FunctionSummary{}
 	for _, f := range files {
 		if f == nil {
@@ -84,7 +103,7 @@ func BuildSummaries(files []*ast.FileAST, cg *callgraph.CallGraph) map[callgraph
 			if s.Kind != "function" && s.Kind != "method" {
 				continue
 			}
-			sm := buildFunctionSummary(f, lines, s, cg)
+			sm := buildFunctionSummary(f, lines, s, cg, db)
 			if sm == nil {
 				continue
 			}
@@ -110,7 +129,7 @@ func BuildSummaries(files []*ast.FileAST, cg *callgraph.CallGraph) map[callgraph
 //     - If `return <expr>` and expr references a tainted param -> mark ReturnedTaint.
 //
 //nolint:gocyclo // single-pass dataflow summary; intentionally flat
-func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *callgraph.CallGraph) *FunctionSummary {
+func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *callgraph.CallGraph, db *sanitizers.DB) *FunctionSummary {
 	id := callgraph.IDOf(f.Path, s.Name)
 	if cg != nil {
 		if _, ok := cg.Nodes[id]; !ok {
@@ -145,9 +164,23 @@ func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *cal
 	}
 
 	lang := string(f.Language)
+	// guard scope tracking for path-sensitive summaries
+	braced := isBracedLang(lang)
+	var scopes []guardScope
+	braceDepth := 0
 	// 3) scan body
 	for ln := s.StartLine + 1; ln <= s.EndLine; ln++ {
 		line := lines[ln-1]
+		indent := leadingIndent(line)
+		if !braced && strings.TrimSpace(line) != "" {
+			scopes = closePythonScopes(scopes, indent)
+		}
+		if isGuardHeader(line) {
+			if kind := detectGuardKind(lang, line, db); kind != "" {
+				scopes = append(scopes, guardScope{startLine: ln, indent: indent, kind: kind, braceDepth: braceDepth})
+			}
+		}
+		inGuard := activeGuardFor(scopes) != nil
 		// detect new sources (these are also tracked separately for IsSource decisions)
 		for _, e := range watchlist.FindMatches(lang, line, watchlist.KindSource) {
 			lhs := captureLHS(line)
@@ -187,6 +220,31 @@ func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *cal
 			}
 		}
 
+		// framework-aware sanitizer DB hits — skip on guard headers so that
+		// `if isValid(x) { sink(x) }` keeps x tainted into the block.
+		if db != nil && !isGuardHeader(line) {
+			for _, sd := range db.Match(lang, line, nil) {
+				if sd.Negative {
+					continue
+				}
+				ref := SanitizerRef{Kind: firstCat(sd.Categories), Match: sd.ID, Line: ln, ID: sd.ID}
+				sm.Sanitizers = append(sm.Sanitizers, ref)
+				for v, origin := range tainted {
+					if !containsWord(line, v) {
+						continue
+					}
+					if origin >= 0 && origin < len(sm.Params) {
+						if inGuard {
+							sm.Params[origin].GuardSanitizers = append(sm.Params[origin].GuardSanitizers, ref)
+						} else {
+							sm.Params[origin].Sanitized = append(sm.Params[origin].Sanitized, ref)
+						}
+					}
+					delete(tainted, v)
+				}
+			}
+		}
+
 		// sinks
 		for _, e := range watchlist.FindMatches(lang, line, watchlist.KindSink) {
 			sr := SinkRef{Kind: e.Category, Match: e.Match, Line: ln}
@@ -196,7 +254,11 @@ func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *cal
 					continue
 				}
 				if origin >= 0 && origin < len(sm.Params) {
-					sm.Params[origin].FlowsTo = append(sm.Params[origin].FlowsTo, sr)
+					if inGuard {
+						sm.Params[origin].GuardedFlowsTo = append(sm.Params[origin].GuardedFlowsTo, sr)
+					} else {
+						sm.Params[origin].FlowsTo = append(sm.Params[origin].FlowsTo, sr)
+					}
 				}
 			}
 		}
@@ -256,6 +318,11 @@ func buildFunctionSummary(f *ast.FileAST, lines []string, s *ast.Symbol, cg *cal
 					sm.Params[origin].ReturnedTaint = true
 				}
 			}
+		}
+
+		if braced {
+			braceDepth += countBraces(line)
+			scopes = closeBracedScopes(scopes, braceDepth)
 		}
 	}
 	return sm
@@ -484,3 +551,10 @@ func callArgsOn(line string) []string {
 // captureLHS exists in taint.go (analyzeFile). We keep this file in the same
 // package so we can reuse it; assignRE is also from taint.go.
 var _ = regexp.MustCompile // ensure regexp stays imported
+
+func firstCat(cs []string) string {
+	if len(cs) == 0 {
+		return ""
+	}
+	return cs[0]
+}

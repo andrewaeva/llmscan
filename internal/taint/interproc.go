@@ -27,6 +27,15 @@ type TaintPath struct {
 	Sink       SinkRef          `json:"sink"`
 	Sanitizers []SanitizerRef   `json:"sanitizers,omitempty"`
 	Confidence float64          `json:"confidence"`
+
+	// Guarded marks a path that reaches a sink only through a
+	// validator/guard scope (ParamFlow.GuardedFlowsTo). Downstream
+	// pipelines should downgrade confidence and severity instead of
+	// treating these as canonical taint flows.
+	Guarded bool `json:"guarded,omitempty"`
+	// SanitizerID records the framework-aware sanitizer that fired on
+	// the path (if any).
+	SanitizerID string `json:"sanitizer_id,omitempty"`
 }
 
 // Options control the inter-procedural walk.
@@ -133,6 +142,35 @@ func AnalyzeInterProc(
 						Sink:       sr,
 						Sanitizers: localSan,
 						Confidence: scoreConfidence(len(hops), len(localSan), false),
+					})
+				}
+
+				// 2b) Path-sensitive: sinks reached only under a guard are
+				// emitted as Guarded paths (severity/confidence downgrade).
+				for _, sr := range pf.GuardedFlowsTo {
+					if sanitized(localSan, sr.Kind) {
+						continue
+					}
+					hops := append([]types.TraceHop(nil), cur.hops...)
+					hops = append(hops, types.TraceHop{
+						File: csum.File, Line: sr.Line, Kind: "sink",
+						Code: sr.Match, Note: "guarded",
+					})
+					sanID := ""
+					for _, gs := range pf.GuardSanitizers {
+						if gs.ID != "" {
+							sanID = gs.ID
+							break
+						}
+					}
+					paths = append(paths, TaintPath{
+						Source:      cur.entry,
+						Hops:        hops,
+						Sink:        sr,
+						Sanitizers:  append(append([]SanitizerRef(nil), localSan...), pf.GuardSanitizers...),
+						Confidence:  scoreConfidence(len(hops), len(localSan)+1, false),
+						Guarded:     true,
+						SanitizerID: sanID,
 					})
 				}
 

@@ -267,8 +267,58 @@ func attachTraces(final []types.Finding, taintTraces map[string][]taint.Trace) {
 	for i := range final {
 		if tr := matchTrace(taintTraces[final[i].File], final[i].StartLine, final[i].EndLine); tr != nil {
 			final[i].Trace = tr.Hops
-			final[i].Sanitizer = tr.Sanitizer
+			if tr.Sanitizer != "" {
+				final[i].Sanitizer = tr.Sanitizer
+			}
+			if tr.SanitizerID != "" && final[i].Sanitizer == "" {
+				final[i].Sanitizer = tr.SanitizerID
+			}
+			applyGuardDowngrade(&final[i], tr.Guarded, tr.GuardKind, tr.SanitizerID)
 		}
+	}
+}
+
+// applyGuardDowngrade lowers severity and confidence one notch when a
+// taint trace landed inside a validator/guard scope or matched a
+// framework-aware sanitizer. Gate 3 (Validation) is auto-PASSed when a
+// SanitizerID is recorded.
+func applyGuardDowngrade(f *types.Finding, guarded bool, guardKind, sanitizerID string) {
+	if !guarded && sanitizerID == "" {
+		return
+	}
+	if guarded {
+		f.Tags = appendUnique(f.Tags, "taint-guarded")
+		if guardKind != "" {
+			f.Tags = appendUnique(f.Tags, "guard:"+guardKind)
+		}
+	}
+	if sanitizerID != "" {
+		f.Tags = appendUnique(f.Tags, "sanitizer:"+sanitizerID)
+		if f.Sanitizer == "" {
+			f.Sanitizer = sanitizerID
+		}
+		if f.Gates == nil {
+			f.Gates = &types.GateReview{}
+		}
+		if f.Gates.Validation == types.GateUnknown {
+			f.Gates.Validation = types.GatePass
+			f.Gates.ValidationReason = "sanitizer database match: " + sanitizerID
+		}
+	}
+	// Severity downgrade by one step.
+	switch f.Severity {
+	case types.SevCritical:
+		f.Severity = types.SevHigh
+	case types.SevHigh:
+		f.Severity = types.SevMedium
+	case types.SevMedium:
+		f.Severity = types.SevLow
+	}
+	// Confidence downgrade: cap below high.
+	if normConf(f.Confidence) == types.ConfHigh {
+		f.Confidence = types.ConfMedium
+	} else if f.Confidence == "" {
+		f.Confidence = types.ConfMedium
 	}
 }
 
@@ -399,6 +449,7 @@ func attachInterProc(final []types.Finding, paths []taint.TaintPath) {
 					f.Sanitizer = tp.Sanitizers[0].Match
 				}
 			}
+			applyGuardDowngrade(f, tp.Guarded, "validation_pass", tp.SanitizerID)
 			// Confidence bump for cross-function chains; bounded at 0.99.
 			if f.Score > 0 {
 				f.Score = minFloat(0.99, f.Score+0.05)

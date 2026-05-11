@@ -1,0 +1,426 @@
+# Default framework-aware sanitizer database for llmscan.
+#
+# Each entry describes a sanitizer / validator / parametrized API whose
+# presence on a code line indicates the data flowing through that line is
+# no longer attacker-controlled for the listed categories.
+#
+# Format: Go regexp patterns (RE2). Backslashes must be doubled in YAML
+# double-quoted strings; we use single-quoted YAML scalars to keep them
+# readable.
+#
+# References: OWASP / Snyk / CWE links.
+
+# =============================================================================
+# Java
+# =============================================================================
+
+- id: java-prepared-statement-setstring
+  name: PreparedStatement parameter binding
+  languages: [java]
+  categories: [sql]
+  framework: jdbc
+  patterns:
+    - '\.set(String|Int|Long|Short|Byte|Boolean|Double|Float|BigDecimal|Date|Timestamp|Object|Bytes)\s*\('
+  callee_names: [setString, setInt, setLong, setObject, setBytes]
+  notes: |
+    PreparedStatement bindings parametrize SQL — no string concat.
+  references:
+    - https://owasp.org/www-community/attacks/SQL_Injection
+    - https://cwe.mitre.org/data/definitions/89.html
+
+- id: java-esapi-encoder
+  name: OWASP ESAPI Encoder
+  languages: [java]
+  categories: [xss, sql, command]
+  framework: esapi
+  patterns:
+    - 'ESAPI\.encoder\(\)\.encodeFor(HTML|HTMLAttribute|JavaScript|URL|CSS|XPath|SQL|OS)\b'
+    - 'Encode\.forHtml(Attribute|Content)?\s*\('
+    - 'Encode\.forJavaScript\s*\('
+    - 'Encode\.forUriComponent\s*\('
+  callee_names: [encodeForHTML, encodeForSQL, encodeForJavaScript, encodeForURL]
+  references:
+    - https://owasp.org/www-project-java-encoder/
+
+- id: java-owasp-html-sanitizer
+  name: OWASP Java HTML Sanitizer
+  languages: [java]
+  categories: [xss]
+  framework: owasp-html-sanitizer
+  patterns:
+    - '(PolicyFactory|HtmlPolicyBuilder|Sanitizers)\b'
+    - '\.sanitize\s*\('
+  callee_names: [sanitize]
+  references:
+    - https://owasp.org/www-project-java-html-sanitizer/
+
+- id: java-bean-validation
+  name: Bean Validation annotations
+  languages: [java]
+  categories: [sql, xss, path, command, ssrf]
+  framework: spring
+  patterns:
+    - '@(NotBlank|NotEmpty|Size|Email|Pattern|Digits|Min|Max|Range|URL|Length)\s*\('
+    - '@Valid\b'
+    - '@Validated\b'
+    - '@PathVariable\s*\([^)]*\b(Integer|Long|UUID|int|long)\b'
+  references:
+    - https://beanvalidation.org/
+    - https://docs.spring.io/spring-framework/reference/core/validation/beanvalidation.html
+
+- id: java-url-encoder
+  name: java.net.URLEncoder.encode
+  languages: [java]
+  categories: [ssrf, xss]
+  patterns:
+    - 'URLEncoder\.encode\s*\('
+  callee_names: [encode]
+  references:
+    - https://docs.oracle.com/javase/8/docs/api/java/net/URLEncoder.html
+
+- id: java-message-format-log
+  name: MessageFormat / parameterized logging
+  languages: [java]
+  categories: [log-injection]
+  patterns:
+    - '\bMessageFormat\.format\s*\('
+    - '\blog\.(trace|debug|info|warn|error)\s*\(\s*"[^"]*\{\}'
+  references:
+    - https://cwe.mitre.org/data/definitions/117.html
+
+- id: java-spring-typed-pathvariable
+  name: Spring @PathVariable with primitive bound
+  languages: [java]
+  categories: [sql, path]
+  framework: spring
+  patterns:
+    - '@PathVariable\s+(int|long|Integer|Long|UUID)\b'
+    - '@RequestParam\s+(int|long|Integer|Long|UUID)\b'
+  references:
+    - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+
+# =============================================================================
+# Python
+# =============================================================================
+
+- id: py-django-orm-filter
+  name: Django ORM parametrized query
+  languages: [python]
+  categories: [sql]
+  framework: django
+  patterns:
+    - '\.objects\.(filter|get|exclude|create|update|annotate)\s*\('
+    - '\.using\s*\([^)]+\)\.(filter|get)\s*\('
+  callee_names: [filter, get, exclude]
+  references:
+    - https://docs.djangoproject.com/en/5.0/topics/db/sql/
+    - https://owasp.org/www-community/attacks/SQL_Injection
+
+- id: py-django-escape
+  name: django.utils.html.escape
+  languages: [python]
+  categories: [xss]
+  framework: django
+  patterns:
+    - '\bdjango\.utils\.html\.escape\s*\('
+    - '\bescape\s*\('
+  callee_names: [escape]
+  references:
+    - https://docs.djangoproject.com/en/5.0/ref/utils/#django.utils.html.escape
+
+- id: py-django-mark-safe-antipattern
+  name: Django mark_safe (anti-pattern)
+  languages: [python]
+  categories: [xss]
+  framework: django
+  negative: true
+  patterns:
+    - '\bmark_safe\s*\('
+    - '\bSafeString\s*\('
+  notes: |
+    mark_safe disables auto-escaping; do NOT treat as a sanitizer.
+  references:
+    - https://docs.djangoproject.com/en/5.0/ref/utils/#django.utils.safestring.mark_safe
+
+- id: py-bleach-clean
+  name: bleach.clean HTML sanitizer
+  languages: [python]
+  categories: [xss]
+  framework: bleach
+  patterns:
+    - '\bbleach\.clean\s*\('
+    - '\bbleach\.linkify\s*\('
+  callee_names: [clean, linkify]
+  references:
+    - https://bleach.readthedocs.io/
+
+- id: py-html-escape
+  name: html.escape
+  languages: [python]
+  categories: [xss]
+  patterns:
+    - '\bhtml\.escape\s*\('
+    - '\bcgi\.escape\s*\('
+  callee_names: [escape]
+  references:
+    - https://docs.python.org/3/library/html.html#html.escape
+
+- id: py-sqlalchemy-text-params
+  name: SQLAlchemy text() bindparams
+  languages: [python]
+  categories: [sql]
+  framework: sqlalchemy
+  patterns:
+    - '\btext\s*\([^)]*\)\.bindparams\s*\('
+    - '\.execute\s*\([^)]*,\s*\{'
+    - '\bselect\s*\([^)]+\)\.where\s*\('
+  references:
+    - https://docs.sqlalchemy.org/en/20/core/sqlelement.html#sqlalchemy.sql.expression.text
+
+- id: py-pymysql-escape
+  name: pymysql.escape_string / MySQLdb.escape_string
+  languages: [python]
+  categories: [sql]
+  framework: pymysql
+  patterns:
+    - '\bescape_string\s*\('
+    - '\bconnection\.escape\s*\('
+  references:
+    - https://pymysql.readthedocs.io/
+
+- id: py-shlex-quote
+  name: shlex.quote
+  languages: [python]
+  categories: [command]
+  patterns:
+    - '\bshlex\.quote\s*\('
+    - '\bpipes\.quote\s*\('
+  references:
+    - https://docs.python.org/3/library/shlex.html#shlex.quote
+
+- id: py-urllib-quote
+  name: urllib.parse.quote
+  languages: [python]
+  categories: [ssrf, path]
+  patterns:
+    - '\burllib\.parse\.(quote|quote_plus|urlencode)\s*\('
+    - '\bquote_plus\s*\('
+  references:
+    - https://docs.python.org/3/library/urllib.parse.html
+
+- id: py-secure-filename
+  name: werkzeug.secure_filename
+  languages: [python]
+  categories: [path]
+  framework: flask
+  patterns:
+    - '\bsecure_filename\s*\('
+  references:
+    - https://werkzeug.palletsprojects.com/en/3.0.x/utils/#werkzeug.utils.secure_filename
+
+- id: py-allowed-list-membership
+  name: Allowed-list membership check
+  languages: [python]
+  categories: [sql, xss, command, path, ssrf]
+  patterns:
+    - '\bin\s+(ALLOWED|WHITELIST|VALID|PERMITTED|SAFE)_[A-Z_]+\b'
+    - '\bin\s+ALLOWED_LIST\b'
+  references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+
+# =============================================================================
+# JavaScript / TypeScript
+# =============================================================================
+
+- id: js-validator-isfoo
+  name: validator.js isX checks
+  languages: [javascript, typescript]
+  categories: [sql, xss, ssrf, path]
+  framework: validator.js
+  patterns:
+    - '\bvalidator\.(isEmail|isURL|isUUID|isAlphanumeric|isInt|isNumeric|isHexadecimal|isBase64|isISO8601|isJWT|isIP|isMACAddress)\s*\('
+    - '\bisEmail\s*\('
+    - '\bisURL\s*\('
+    - '\bisUUID\s*\('
+  references:
+    - https://github.com/validatorjs/validator.js
+
+- id: js-dompurify
+  name: DOMPurify.sanitize
+  languages: [javascript, typescript]
+  categories: [xss]
+  framework: dompurify
+  patterns:
+    - '\bDOMPurify\.sanitize\s*\('
+    - '\bsanitizeHtml\s*\('
+  callee_names: [sanitize, sanitizeHtml]
+  references:
+    - https://github.com/cure53/DOMPurify
+
+- id: js-sequelize-replacements
+  name: Sequelize replacements/bind
+  languages: [javascript, typescript]
+  categories: [sql]
+  framework: sequelize
+  patterns:
+    - '\.query\s*\([^)]*\{\s*(replacements|bind)\s*:'
+    - '\bsequelize\.literal\s*\('
+  references:
+    - https://sequelize.org/docs/v6/core-concepts/raw-queries/
+
+- id: js-prisma-parametrized
+  name: Prisma parametrized query
+  languages: [javascript, typescript]
+  categories: [sql]
+  framework: prisma
+  patterns:
+    - '\bprisma\.\$queryRaw`'
+    - '\bPrisma\.sql`'
+    - '\bprisma\.[a-zA-Z]+\.(findUnique|findFirst|findMany|create|update|delete)\s*\('
+  references:
+    - https://www.prisma.io/docs/orm/prisma-client/queries/raw-database-access
+
+- id: js-knex-bindings
+  name: Knex.js parameter bindings
+  languages: [javascript, typescript]
+  categories: [sql]
+  framework: knex
+  patterns:
+    - '\bknex\.raw\s*\([^,]+,\s*\['
+    - '\.where\s*\(\s*\{'
+    - '\.whereIn\s*\('
+  references:
+    - https://knexjs.org/guide/raw.html
+
+- id: js-lodash-escape
+  name: lodash.escape
+  languages: [javascript, typescript]
+  categories: [xss]
+  framework: lodash
+  patterns:
+    - '\b_\.escape\s*\('
+    - '\blodash\.escape\s*\('
+  references:
+    - https://lodash.com/docs/4.17.15#escape
+
+- id: js-encode-uri-component
+  name: encodeURIComponent
+  languages: [javascript, typescript]
+  categories: [ssrf, xss, path]
+  patterns:
+    - '\bencodeURIComponent\s*\('
+    - '\bencodeURI\s*\('
+  references:
+    - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent
+
+- id: js-xss-package
+  name: xss npm filter
+  languages: [javascript, typescript]
+  categories: [xss]
+  framework: xss
+  patterns:
+    - '\bxss\s*\('
+    - '\bnew\s+FilterXSS\s*\('
+  references:
+    - https://github.com/leizongmin/js-xss
+
+- id: js-path-resolve-rel
+  name: path.resolve + relative root check
+  languages: [javascript, typescript]
+  categories: [path]
+  patterns:
+    - '\bpath\.resolve\s*\('
+    - '\bpath\.relative\s*\('
+  references:
+    - https://owasp.org/www-community/attacks/Path_Traversal
+
+# =============================================================================
+# Go
+# =============================================================================
+
+- id: go-html-template
+  name: html/template autoescape
+  languages: [go]
+  categories: [xss]
+  patterns:
+    - '"html/template"'
+    - '\btemplate\.HTMLEscape(String)?\s*\('
+    - '\bhtml\.EscapeString\s*\('
+  callee_names: [HTMLEscapeString, EscapeString]
+  references:
+    - https://pkg.go.dev/html/template
+
+- id: go-sql-placeholders
+  name: database/sql placeholders
+  languages: [go]
+  categories: [sql]
+  patterns:
+    - '\.Query(Context|Row|RowContext)?\s*\([^)]*,\s*[^)]+\)'
+    - '\.Exec(Context)?\s*\([^)]*,\s*[^)]+\)'
+    - '\bstmt\s*,\s*err\s*:?=\s*db\.Prepare\s*\('
+  references:
+    - https://go.dev/doc/database/sql-injection
+
+- id: go-regexp-quote-meta
+  name: regexp.QuoteMeta
+  languages: [go]
+  categories: [regex-injection]
+  patterns:
+    - '\bregexp\.QuoteMeta\s*\('
+  references:
+    - https://pkg.go.dev/regexp#QuoteMeta
+
+- id: go-filepath-clean
+  name: filepath.Clean with relative-root check
+  languages: [go]
+  categories: [path]
+  patterns:
+    - '\bfilepath\.Clean\s*\('
+    - '\bfilepath\.Rel\s*\('
+    - '\bfilepath\.IsLocal\s*\('
+  references:
+    - https://pkg.go.dev/path/filepath#Clean
+    - https://cwe.mitre.org/data/definitions/22.html
+
+- id: go-url-queryescape
+  name: url.QueryEscape / url.PathEscape
+  languages: [go]
+  categories: [ssrf, xss]
+  patterns:
+    - '\burl\.(QueryEscape|PathEscape)\s*\('
+  references:
+    - https://pkg.go.dev/net/url#QueryEscape
+
+- id: go-bluemonday
+  name: bluemonday HTML sanitizer
+  languages: [go]
+  categories: [xss]
+  framework: bluemonday
+  patterns:
+    - '\bbluemonday\.(UGCPolicy|StrictPolicy|StripTagsPolicy)\s*\('
+    - '\.Sanitize(Bytes|Reader)?\s*\('
+  callee_names: [Sanitize, SanitizeBytes]
+  references:
+    - https://github.com/microcosm-cc/bluemonday
+
+- id: go-strconv-parse
+  name: strconv numeric parsers
+  languages: [go]
+  categories: [sql, path]
+  patterns:
+    - '\bstrconv\.(Atoi|ParseInt|ParseFloat|ParseUint|ParseBool)\s*\('
+  references:
+    - https://pkg.go.dev/strconv
+
+# =============================================================================
+# Cross-language generic validation guards
+# =============================================================================
+
+- id: generic-isvalid-guard
+  name: isValid / validate / sanitize guard call
+  languages: [java, python, javascript, typescript, go]
+  categories: [sql, xss, command, path, ssrf]
+  patterns:
+    - '\b(isValid|isSafe|validate|sanitize|verify|isAlphanumeric|matches)\s*\('
+  references:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
