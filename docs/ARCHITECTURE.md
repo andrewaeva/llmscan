@@ -101,7 +101,7 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 14 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
 | 15 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
 | 16 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
-| 17 | `post-process` | `postprocess.go` | — | reachability downgrade, dedupe, suppress, calibration, baseline, deep-pass, stats |
+| 17 | `post-process` | `postprocess.go` | — | dedupe, suppress, **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, stats |
 | 18 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
@@ -144,7 +144,7 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 
 ## LangChain-паттерны (всегда включены)
 
-Пять паттернов работают по умолчанию, feature-flag'ов у них нет. Остались только тюнинг-поля в `precision.*`.
+Восемь паттернов работают по умолчанию, feature-flag'ов у них нет. Остались только тюнинг-поля в `precision.*` / `deep.*`.
 
 | Паттерн | Пакет | Что делает | Тюнинг |
 |---|---|---|---|
@@ -153,6 +153,9 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | Plan-and-Execute Verifier | `internal/agents/plan_verifier.go` | вместо одноразового Verifier — `Planner → Executor` tool-loop поверх sandbox-а DeepAgent. При отсутствии tool-calls / sandbox — фоллбэк на обычный Verifier | — |
 | Knowledge memory | `internal/knowledge` | `<target>/.llmscan/knowledge.md` (≤8 KB) читается в `load-knowledge`, пишется в `write-knowledge` как top-N rule_id × file | — |
 | Reflexion loop | `internal/agents/reflexion.go` | оборачивает scanner в `generate → critique → revise` тем же клиентом, что и сам сканер | `precision.reflexion_skills` (белый список), `precision.reflexion_max_iters` (дефолт 1) |
+| Map-reduce Refine | `internal/agents/refiner.go` + `internal/pipeline/refine.go` | группирует post-verify findings по файлу; при ≥ `refine_threshold` — reducer-LLM partitionя дубли в group-base + merged ids. Reducer-промпт фиксирует: новые findings выдумывать нельзя. base = highest severity → confidence → earliest line. Мерджи получают тег `refined` и rationale в `VerifierComment`. При ошибке LLM — input passthrough | `precision.refine_threshold` (дефолт 3), `precision.refine_max_findings` (дефолт 20) |
+| Multi-agent Debate | `internal/agents/debater.go` + `internal/pipeline/deep.go::runDebatePass` | после deep-pass для каждого high-severity finding: proponent (`temp=0.3`) ↔ opponent (`temp=0.6`) до `debate_max_rounds` раундов. Concede-aware: любая сторона может выставить `concede=true`. Verdict: `tp`/`fp`/`inconclusive`/`split`. FP-консенсус → `FalsePositive=true` + тег `debate-fp`; split → score × 0.7 + тег `debate-split`; inconclusive → no-op | `deep.debate` (bool, дефолт true), `deep.debate_max_rounds` (дефолт 2) |
+| LangGraph state machine | `internal/agents/graph.go` | `Graph[S any]` — generic stateful DAG: `AddNode(name, fn)`, `AddEdge(from, to)`, `SetRouter(node, router)`, `SetEntry`, sentinel `End`. `MaxSteps` budget guard (дефолт 64), optional `Logf`, `Validate()`. Используется в `runDebatePass` (`gate → debate → apply`); базовый примитив для будущих per-item conditional flows | — |
 
 ## ContextPack: как формируется промпт сканера
 
@@ -225,11 +228,11 @@ Deep-pass (опционально, `--deep`): для high-severity findings за
 - `scan.{include,exclude,scope_roots,max_files,vcs}` — границы обхода
 - `scan.chunk.{target_tokens,max_tokens,min_tokens,fallback_lines}` — адаптивный чанкер
 - `scan.context.{level,budget_tokens,*_hops,*_max,include_*,*_max}` — ContextPack
-- `precision.{watchlist,taint,interproc,reach,secrets,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters}` — переключатели, пороги и тюнинг LangChain-паттернов
+- `precision.{watchlist,taint,interproc,reach,secrets,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters,refine_threshold,refine_max_findings}` — переключатели, пороги и тюнинг LangChain-паттернов
 - `rag.{enabled,provider,model,top_k,batch_size}` — retrieval
 - `cache.{enabled,path}`, `ast_cache.{enabled,path}` — SQLite кэши
 - `baseline.{path,write}` — сравнение с прошлым прогоном
-- `deep.{enabled,min_severity,max_hotspots,budget,concurrency}` — sub-агент
+- `deep.{enabled,min_severity,max_hotspots,budget,concurrency,debate,debate_max_rounds}` — sub-агент + debate
 
 Валидация — единая `Config.Validate()`. Никаких deprecated-полей: legacy line-based chunker, symbol-expansion и `ChunkConfig.Enabled`/`ContextConfig.Enabled` удалены.
 

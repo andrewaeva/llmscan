@@ -52,13 +52,13 @@ go build -o llmscan ./cmd/llmscan
 discover → parse-ast → depgraph → diff-filter → watchlist →
 taint → symexpand → secrets-prefilter → load-knowledge →
 orchestrator → RAG → [scanners ∥ + IaC] → dedup → verifier →
-fp_filter → suppress → reachability → deep (optional) →
+fp_filter → suppress → refine → reachability → deep (+debate) →
 score-filter → baseline → write-knowledge → report
 ```
 
 ## Что внутри (LangChain-паттерны, всегда включены)
 
-Пять паттернов работают по умолчанию, без feature-flag'ов:
+Восемь паттернов работают по умолчанию, без feature-flag'ов:
 
 1. **Extended DeepAgent tools** — поверх `read_file`/`grep`/`list_dir`/`blame`
    агент имеет символический индекс: `read_symbol`, `find_callers`,
@@ -78,6 +78,21 @@ score-filter → baseline → write-knowledge → report
    сканер крутит `generate → critique → revise` до
    `precision.reflexion_max_iters` итераций (дефолт 1) тем же клиентом, что и
    сам сканер. Тюнинг — белый список скиллов, чтобы не платить за каждый.
+6. **Map-reduce Refine** — когда чанкер режет один файл на несколько кусков и
+   из них прилетает ≥ `precision.refine_threshold` findings (дефолт 3), запускается
+   reducer-LLM, который консолидирует дубли и партиционирует findings в
+   объединённые группы (теги `refined`, base — самый severe + ранний). Если
+   LLM-вызов падает — fallback на исходный список без потерь.
+7. **Multi-agent Debate** — в `--deep` для каждого hotspot тот же провайдер
+   крутится в роли proponent (low temp) ↔ opponent (high temp) до
+   `deep.debate_max_rounds` раундов (дефолт 2). Финальный verdict: tp / fp /
+   inconclusive / split. FP-консенсус помечает finding как FP с тегом
+   `debate-fp`; split режет score на 0.7 (тег `debate-split`). Concede-aware:
+   любая сторона может уступить до конца раундов.
+8. **LangGraph state machine** — `agents.Graph[S]` — generic stateful DAG с
+   узлами / условными edges / router-функциями / budget guard. Используется
+   для per-finding роутинга в debate (`gate → debate → apply`). Базовый
+   примитив для будущих conditional flows.
 
 Настройка в `llmscan.yaml`:
 
@@ -86,6 +101,12 @@ precision:
   fewshot_top_k: 3
   reflexion_skills: [injection, auth, race-conditions]
   reflexion_max_iters: 2
+  refine_threshold: 3       # ≥ N findings на файл → запустить reducer
+  refine_max_findings: 20   # верхняя граница на reducer-вход
+
+deep:
+  debate: true              # включить дебаты в --deep
+  debate_max_rounds: 2      # сколько раундов pro/contra на hotspot
 ```
 
 ## Ключевые флаги
