@@ -201,6 +201,18 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 // runDebatePass invokes the Debater on every hotspot whose deep verdict is
 // not a clear refute. Disagreement after MaxRounds applies a 0.7 score
 // penalty and tags the finding "debate-split".
+//
+// Per-finding routing is expressed as a small LangGraph-style state machine
+// (internal/agents.Graph). The nodes are:
+//
+//   gate    -> filter (suppressed / FP / refuted -> End)
+//   debate  -> call Debater.Debate, store result in state
+//   apply   -> mutate the underlying finding based on the verdict
+//
+// The router on "gate" picks debate or End; the router on "debate" always
+// flows into apply -> End. This is small enough that a switch would also
+// work, but keeping it in the graph means every routing decision shows up
+// in --verbose output with a stable node name.
 func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []types.Finding, indices []int) {
 	cfg := e.Cfg.Deep
 	maxR := cfg.DebateMaxRounds
@@ -215,41 +227,83 @@ func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []ty
 		Verbose:       e.Verbose,
 		Logf:           e.logf,
 	}
+	g := buildDebateGraph(deb, e.logf)
 	start := time.Now()
 	var splits, agreed int
 	for _, i := range indices {
-		f := findings[i]
-		if f.FalsePositive || f.Suppressed {
+		st := &debateState{f: &findings[i]}
+		if err := g.Run(ctx, st); err != nil {
+			e.logf("debate graph[%d]: %v", i, err)
 			continue
 		}
-		if f.DeepVerdict == "refuted" {
-			continue
-		}
-		res := deb.Debate(ctx, f, f.DeepComment)
-		switch res.Verdict {
+		switch st.applied {
 		case "split":
 			splits++
-			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-split")
-			if findings[i].Score > 0 {
-				findings[i].Score *= res.SplitPenalty
-			}
-			if findings[i].VerifierComment == "" {
-				findings[i].VerifierComment = res.Rationale
-			}
-		case "fp":
+		case "tp", "fp":
 			agreed++
-			findings[i].FalsePositive = true
-			if findings[i].FPReason == "" {
-				findings[i].FPReason = "debate consensus: " + res.Rationale
-			}
-			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-fp")
-		case "tp":
-			agreed++
-			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-tp")
 		}
-		e.logf("debate[%d] %s:%d -> %s (rounds=%d)", i, f.File, f.StartLine, res.Verdict, res.Rounds)
 	}
 	e.logf("debate: %d agreed, %d split (in %s)", agreed, splits, time.Since(start).Round(time.Millisecond))
+}
+
+// debateState is the state carried through buildDebateGraph. It points at
+// the live finding so apply-node mutations land in the caller's slice.
+type debateState struct {
+	f       *types.Finding
+	result  agents.DebateResult
+	applied string // "tp" | "fp" | "split" | "" (skipped or inconclusive)
+}
+
+func buildDebateGraph(deb *agents.Debater, logf func(string, ...any)) *agents.Graph[debateState] {
+	g := agents.NewGraph[debateState]()
+	g.Logf = logf
+
+	g.AddNode("gate", func(_ context.Context, _ *debateState) error { return nil })
+	g.SetRouter("gate", func(s *debateState) string {
+		if s.f == nil || s.f.FalsePositive || s.f.Suppressed {
+			return agents.End
+		}
+		if s.f.DeepVerdict == "refuted" {
+			return agents.End
+		}
+		return "debate"
+	})
+
+	g.AddNode("debate", func(ctx context.Context, s *debateState) error {
+		s.result = deb.Debate(ctx, *s.f, s.f.DeepComment)
+		return nil
+	})
+	g.AddEdge("debate", "apply")
+
+	g.AddNode("apply", func(_ context.Context, s *debateState) error {
+		res := s.result
+		switch res.Verdict {
+		case "split":
+			s.f.Tags = appendUniqueTag(s.f.Tags, "debate-split")
+			if s.f.Score > 0 {
+				s.f.Score *= res.SplitPenalty
+			}
+			if s.f.VerifierComment == "" {
+				s.f.VerifierComment = res.Rationale
+			}
+			s.applied = "split"
+		case "fp":
+			s.f.FalsePositive = true
+			if s.f.FPReason == "" {
+				s.f.FPReason = "debate consensus: " + res.Rationale
+			}
+			s.f.Tags = appendUniqueTag(s.f.Tags, "debate-fp")
+			s.applied = "fp"
+		case "tp":
+			s.f.Tags = appendUniqueTag(s.f.Tags, "debate-tp")
+			s.applied = "tp"
+		}
+		return nil
+	})
+	g.AddEdge("apply", agents.End)
+
+	g.SetEntry("gate")
+	return g
 }
 
 func appendUniqueTag(tags []string, v string) []string {
