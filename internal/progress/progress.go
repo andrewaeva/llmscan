@@ -292,7 +292,10 @@ func (t *TUIReporter) Logf(format string, args ...any) {
 	}
 }
 
-// Stop tears down the render loop and prints a final frame.
+// Stop tears down the render loop and erases the rendered region entirely.
+// No "final frame" is painted: this keeps stdout clean for any text the
+// caller prints next (e.g. the final report) and prevents the last TUI frame
+// from overwriting that output via residual cursor-up sequences.
 func (t *TUIReporter) Stop() {
 	t.mu.Lock()
 	if t.stopped {
@@ -303,10 +306,25 @@ func (t *TUIReporter) Stop() {
 	t.mu.Unlock()
 	close(t.stop)
 	t.wg.Wait()
-	// Final frame after the loop has exited.
 	t.mu.Lock()
-	t.render(true)
+	t.clearFrame()
 	t.mu.Unlock()
+}
+
+// clearFrame erases the previously rendered region by emitting `lastLines`
+// cursor-up + erase-line pairs. After this call the cursor sits at the
+// column it was at before the first render — i.e. wherever subsequent output
+// would naturally start. Called with the lock held.
+func (t *TUIReporter) clearFrame() {
+	if t.lastLines <= 0 {
+		return
+	}
+	var b strings.Builder
+	for i := 0; i < t.lastLines; i++ {
+		b.WriteString("\x1b[1A\x1b[2K") // cursor up + erase line
+	}
+	fmt.Fprint(t.w, b.String())
+	t.lastLines = 0
 }
 
 func (t *TUIReporter) loop() {
@@ -320,7 +338,7 @@ func (t *TUIReporter) loop() {
 		case <-tk.C:
 			t.mu.Lock()
 			t.tick++
-			t.render(false)
+			t.render()
 			t.mu.Unlock()
 		}
 	}
@@ -337,7 +355,7 @@ func (t *TUIReporter) loop() {
 //	  • parse-ast        ▶      217/300         1.8s
 //	  • scanners         ▶       42/300        14.1s
 //	  log: …
-func (t *TUIReporter) render(final bool) {
+func (t *TUIReporter) render() {
 	// Build into a buffer first to count lines exactly.
 	var b strings.Builder
 	elapsed := time.Since(t.started).Round(time.Second)
@@ -362,9 +380,6 @@ func (t *TUIReporter) render(final bool) {
 		}
 	}
 	bar = renderBar(pct, tuiBarWidth)
-	if final {
-		spin = '✓'
-	}
 	fmt.Fprintf(&b, "  \x1b[33m%c\x1b[0m %s \x1b[2m%3d%%\x1b[0m  units: %d/%d\n",
 		spin, bar, pct, doneSum, totSum)
 
@@ -406,10 +421,6 @@ func (t *TUIReporter) render(final bool) {
 			l = l[:117] + "..."
 		}
 		fmt.Fprintf(&b, "  \x1b[2m· %s\x1b[0m\n", l)
-	}
-
-	if final {
-		fmt.Fprintf(&b, "\x1b[36m└─ done in %s\x1b[0m\n", fmtDur(elapsed))
 	}
 
 	// Clear previous frame.

@@ -168,8 +168,40 @@ func TestTUIReporter_Lifecycle(t *testing.T) {
 	if !strings.Contains(out, "scanners") {
 		t.Errorf("expected scanners stage in output")
 	}
-	if !strings.Contains(out, "done in ") {
-		t.Errorf("expected final footer with 'done in'")
+	// After Stop() the rendered region must be cleared so the caller can print
+	// the final report on a clean slate. We require the output to end with the
+	// erase-line sequence (cursor-up + erase-line emitted once per painted row).
+	if !strings.HasSuffix(out, "\x1b[1A\x1b[2K") {
+		t.Errorf("expected output to end with cursor-up+erase-line sequences after Stop(); last 40 bytes=%q", lastN(out, 40))
+	}
+}
+
+func lastN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+func TestTUIReporter_StopClearsFrame(t *testing.T) {
+	// Drives the explicit clear-on-Stop contract: after Stop, the previously
+	// painted lines must be erased so a subsequent printer (the report writer)
+	// starts on a blank line.
+	var buf bytes.Buffer
+	tui := NewTUI(&buf)
+	tui.Stage("phase", 4)
+	tui.Inc("phase", 2)
+	// Let one render frame land.
+	time.Sleep(150 * time.Millisecond)
+	tui.Stop()
+
+	out := buf.String()
+	if !strings.Contains(out, "\x1b[1A\x1b[2K") {
+		t.Errorf("expected clear sequence in output; got %q", out)
+	}
+	// No "done in" footer — Stop must not paint a final frame.
+	if strings.Contains(out, "done in ") {
+		t.Errorf("Stop() must not paint a final frame; got %q", out)
 	}
 }
 
