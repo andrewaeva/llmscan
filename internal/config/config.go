@@ -36,8 +36,6 @@ type ScanConfig struct {
 	Include        []string `yaml:"include,omitempty"`
 	Exclude        []string `yaml:"exclude,omitempty"`
 	MaxFileBytes   int      `yaml:"max_file_bytes,omitempty"`
-	ChunkLines     int      `yaml:"chunk_lines,omitempty"`
-	ChunkOverlap   int      `yaml:"chunk_overlap,omitempty"`
 	Concurrency    int      `yaml:"concurrency,omitempty"`    // chunks in flight per single scanner agent
 	AgentParallel  int      `yaml:"agent_parallel,omitempty"` // scanner agents in flight (DAG layer)
 	FollowSymlinks bool     `yaml:"follow_symlinks,omitempty"`
@@ -47,26 +45,24 @@ type ScanConfig struct {
 	MaxFiles   int      `yaml:"max_files,omitempty"`   // abort with error above this count; 0 = unlimited
 	VCS        string   `yaml:"vcs,omitempty"`         // auto | git | arc | none
 
-	// Chunk and Context are the new token-aware knobs. They co-exist with the
-	// legacy ChunkLines/ChunkOverlap fields for back-compat; when Chunk.Enabled
-	// is true the pipeline uses the adaptive (symbol+token) chunker and the
-	// ContextPack builder instead of the line-window chunker.
+	// Chunk controls the adaptive (token-aware, symbol-grouped) chunker.
+	// Context wires the ContextPack builder. Both always run; zero fields fall
+	// back to tuned defaults inside the pipeline.
 	Chunk   ChunkConfig   `yaml:"chunk,omitempty"`
 	Context ContextConfig `yaml:"context,omitempty"`
 }
 
 // ChunkConfig controls the adaptive (token-aware, symbol-grouped) chunker.
 //
-// When Enabled, the pipeline groups consecutive top-level symbols up to
-// TargetTokens, hard-caps at MaxTokens, and avoids emitting tail chunks
-// smaller than MinTokens. Tuned defaults match 200K-context modern models:
+// The pipeline groups consecutive top-level symbols up to TargetTokens,
+// hard-caps at MaxTokens, and avoids emitting tail chunks smaller than
+// MinTokens. Tuned defaults match 200K-context modern models:
 // target = 8000 tokens ≈ 700–1000 LOC of Go.
 type ChunkConfig struct {
-	Enabled       bool `yaml:"enabled,omitempty"`
-	TargetTokens  int  `yaml:"target_tokens,omitempty"`
-	MaxTokens     int  `yaml:"max_tokens,omitempty"`
-	MinTokens     int  `yaml:"min_tokens,omitempty"`
-	FallbackLines int  `yaml:"fallback_lines,omitempty"`
+	TargetTokens  int `yaml:"target_tokens,omitempty"`
+	MaxTokens     int `yaml:"max_tokens,omitempty"`
+	MinTokens     int `yaml:"min_tokens,omitempty"`
+	FallbackLines int `yaml:"fallback_lines,omitempty"`
 }
 
 // ContextConfig wires the contextpack builder.
@@ -75,7 +71,6 @@ type ChunkConfig struct {
 // for "balanced"). BudgetTokens overrides the level default; 0 = derive from
 // ModelSpec.ContextWindow (cap at 0.7 × window).
 type ContextConfig struct {
-	Enabled           bool    `yaml:"enabled,omitempty"`
 	Level             string  `yaml:"level,omitempty"`
 	BudgetTokens      int     `yaml:"budget_tokens,omitempty"`
 	CalleesHops       int     `yaml:"callees_hops,omitempty"`
@@ -119,10 +114,6 @@ type SkillsConfig struct {
 type PrecisionConfig struct {
 	// PreFilterWatchlist skips files with zero source/sink hits from watchlist.
 	PreFilterWatchlist bool `yaml:"pre_filter_watchlist"`
-	// SymbolExpansion attaches referenced function defs (1-2 hops) to scanner context.
-	SymbolExpansion bool `yaml:"symbol_expansion"`
-	SymExpandHops   int  `yaml:"sym_expand_hops,omitempty"`
-	SymExpandMax    int  `yaml:"sym_expand_max,omitempty"`
 	// Taint enables intra-file (and best-effort cross-file) taint tracking.
 	Taint bool `yaml:"taint"`
 	// Reachability downgrades findings in dead/test code.
@@ -268,9 +259,6 @@ func Default() Config {
 		DropFalsePositives:          true,
 		Precision: PrecisionConfig{
 			PreFilterWatchlist: true,
-			SymbolExpansion:    true,
-			SymExpandHops:      1,
-			SymExpandMax:       4,
 			Taint:              true,
 			Reachability:       true,
 			VoteN:              0,
@@ -300,8 +288,6 @@ func Default() Config {
 		},
 		Scan: ScanConfig{
 			MaxFileBytes:   256 * 1024,
-			ChunkLines:     350,
-			ChunkOverlap:   30,
 			Concurrency:    16,
 			AgentParallel:  8,
 			FollowSymlinks: false,
@@ -313,16 +299,14 @@ func Default() Config {
 				"*.min.js", "*.lock", "*.sum", "go.sum",
 			},
 			Chunk: ChunkConfig{
-				Enabled:       false,
 				TargetTokens:  8000,
 				MaxTokens:     16000,
 				MinTokens:     500,
 				FallbackLines: 400,
 			},
 			Context: ContextConfig{
-				Enabled: false,
-				Level:   "balanced",
-				Cache:   true,
+				Level: "balanced",
+				Cache: true,
 			},
 		},
 	}
@@ -368,42 +352,34 @@ func (c Config) Validate() error {
 	if p.InterProcMaxDepth < 0 {
 		return fmt.Errorf("precision.interproc_max_depth=%d must be >= 0", p.InterProcMaxDepth)
 	}
-	if p.SymExpandHops < 0 {
-		return fmt.Errorf("precision.sym_expand_hops=%d must be >= 0", p.SymExpandHops)
-	}
-	if p.SymExpandMax < 0 {
-		return fmt.Errorf("precision.sym_expand_max=%d must be >= 0", p.SymExpandMax)
-	}
 	if p.JSONRetries < 0 {
 		return fmt.Errorf("precision.json_retries=%d must be >= 0", p.JSONRetries)
 	}
 	if c.Deep.MaxHotspots < 0 || c.Deep.Budget < 0 || c.Deep.Concurrency < 0 {
 		return fmt.Errorf("deep.* counters must be >= 0")
 	}
-	if cc := c.Scan.Chunk; cc.Enabled {
-		if cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens {
-			return fmt.Errorf("scan.chunk.max_tokens=%d must be >= target_tokens=%d",
-				cc.MaxTokens, cc.TargetTokens)
-		}
-		if cc.MinTokens < 0 || cc.TargetTokens < 0 || cc.MaxTokens < 0 {
-			return fmt.Errorf("scan.chunk.* token counters must be >= 0")
-		}
+	cc := c.Scan.Chunk
+	if cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens {
+		return fmt.Errorf("scan.chunk.max_tokens=%d must be >= target_tokens=%d",
+			cc.MaxTokens, cc.TargetTokens)
 	}
-	if cc := c.Scan.Context; cc.Enabled {
-		if cc.OverflowRatio < 0 || cc.OverflowRatio > 1 {
-			return fmt.Errorf("scan.context.overflow_ratio=%v must be in [0,1]", cc.OverflowRatio)
-		}
-		if cc.BudgetTokens < 0 {
-			return fmt.Errorf("scan.context.budget_tokens=%d must be >= 0", cc.BudgetTokens)
-		}
-		if cc.CalleesHops < 0 || cc.CallersHops < 0 {
-			return fmt.Errorf("scan.context.*_hops must be >= 0")
-		}
-		switch strings.ToLower(cc.Level) {
-		case "", "minimal", "balanced", "aggressive", "extreme":
-		default:
-			return fmt.Errorf("scan.context.level=%q must be one of minimal|balanced|aggressive|extreme", cc.Level)
-		}
+	if cc.MinTokens < 0 || cc.TargetTokens < 0 || cc.MaxTokens < 0 {
+		return fmt.Errorf("scan.chunk.* token counters must be >= 0")
+	}
+	ctx := c.Scan.Context
+	if ctx.OverflowRatio < 0 || ctx.OverflowRatio > 1 {
+		return fmt.Errorf("scan.context.overflow_ratio=%v must be in [0,1]", ctx.OverflowRatio)
+	}
+	if ctx.BudgetTokens < 0 {
+		return fmt.Errorf("scan.context.budget_tokens=%d must be >= 0", ctx.BudgetTokens)
+	}
+	if ctx.CalleesHops < 0 || ctx.CallersHops < 0 {
+		return fmt.Errorf("scan.context.*_hops must be >= 0")
+	}
+	switch strings.ToLower(ctx.Level) {
+	case "", "minimal", "balanced", "aggressive", "extreme":
+	default:
+		return fmt.Errorf("scan.context.level=%q must be one of minimal|balanced|aggressive|extreme", ctx.Level)
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/andrewaeva/llmscan/internal/chunker"
-	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
@@ -60,7 +59,7 @@ func wholeFileChunk(f types.FileTarget) types.FileTarget {
 // in half and packs are rebuilt for each half. The loop is bounded to avoid
 // pathological re-splitting (max 4 rounds).
 func stageBuildContextPacks(ctx context.Context, e *Engine, s *runState) error {
-	cfg := buildContextpackConfig(e.Cfg)
+	cfg := contextpack.FromConfig(e.Cfg)
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("context-pack: invalid config: %w", err)
 	}
@@ -191,75 +190,6 @@ func lookupPackFromCache(b *contextpack.Builder, cacheDB interface {
 		return contextpack.Pack{}, false
 	}
 	return p, true
-}
-
-// buildContextpackConfig resolves the runtime ContextPack config from cfg.
-// Precedence: level preset → AutoContextBudget → per-field overrides.
-func buildContextpackConfig(c config.Config) contextpack.Config {
-	var base contextpack.Config
-	switch strings.ToLower(c.Scan.Context.Level) {
-	case "minimal":
-		base = contextpack.MinimalConfig()
-	case "aggressive":
-		base = contextpack.AggressiveConfig()
-	case "extreme":
-		base = contextpack.ExtremeConfig()
-	default:
-		base = contextpack.DefaultConfig()
-	}
-	if b := c.AutoContextBudget(""); b > 0 {
-		base.BudgetTokens = b
-	}
-	cc := c.Scan.Context
-	if cc.CalleesHops > 0 {
-		base.CalleesHops = cc.CalleesHops
-	}
-	if cc.CalleesMax > 0 {
-		base.CalleesMax = cc.CalleesMax
-	}
-	if cc.CallersHops > 0 {
-		base.CallersHops = cc.CallersHops
-	}
-	if cc.CallersMax > 0 {
-		base.CallersMax = cc.CallersMax
-	}
-	if cc.IncludeTypes != nil {
-		base.IncludeTypes = *cc.IncludeTypes
-	}
-	if cc.TypesMax > 0 {
-		base.TypesMax = cc.TypesMax
-	}
-	if cc.IncludeSanitizers != nil {
-		base.IncludeSanitizers = *cc.IncludeSanitizers
-	}
-	if cc.SanitizersMax > 0 {
-		base.SanitizersMax = cc.SanitizersMax
-	}
-	if cc.IncludeSiblings != nil {
-		base.IncludeSiblings = *cc.IncludeSiblings
-	}
-	if cc.SiblingsMax > 0 {
-		base.SiblingsMax = cc.SiblingsMax
-	}
-	if cc.RAGTopK > 0 {
-		base.RAGTopK = cc.RAGTopK
-	}
-	if cc.IncludeConsts != nil {
-		base.IncludeConsts = *cc.IncludeConsts
-	}
-	if cc.ConstsMax > 0 {
-		base.ConstsMax = cc.ConstsMax
-	}
-	if cc.SqueezeHeadLines > 0 {
-		base.SqueezeHeadLines = cc.SqueezeHeadLines
-	}
-	if cc.SqueezeTailLines > 0 {
-		base.SqueezeTailLines = cc.SqueezeTailLines
-	}
-	if cc.OverflowRatio > 0 {
-		base.OverflowRatio = cc.OverflowRatio
-	}
-	return base
 }
 
 // percentileInt returns the (approximate) p-th percentile of xs (0<p<100).

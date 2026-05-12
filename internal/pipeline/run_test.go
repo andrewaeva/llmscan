@@ -91,14 +91,12 @@ func configForServer(t *testing.T, srvURL string) config.Config {
 	cfg.RAG.Enabled = false
 	cfg.Precision.Taint = false
 	cfg.Precision.Reachability = false
-	cfg.Precision.SymbolExpansion = false
 	cfg.Precision.PreFilterWatchlist = false
 	cfg.Precision.SecretsPreFilter = false
 	cfg.Precision.VoteN = 0
 	cfg.Deep.Enabled = false
 	cfg.DropFalsePositives = true
 	cfg.Scan.MaxFileBytes = 1 << 20
-	cfg.Scan.ChunkLines = 200
 	cfg.Scan.Concurrency = 2
 	cfg.Scan.AgentParallel = 2
 	// Restrict to a tiny set of agents to keep the test deterministic and fast.

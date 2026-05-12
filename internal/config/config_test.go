@@ -30,7 +30,7 @@ func TestDefaultBaseline(t *testing.T) {
 	if c.VerifierConfidenceThreshold != ConfLow {
 		t.Errorf("verifier threshold = %q", c.VerifierConfidenceThreshold)
 	}
-	if c.Scan.ChunkLines == 0 || c.Scan.MaxFileBytes == 0 {
+	if c.Scan.MaxFileBytes == 0 || c.Scan.Chunk.TargetTokens == 0 {
 		t.Errorf("scan defaults missing: %+v", c.Scan)
 	}
 	if !c.Precision.PreFilterWatchlist || !c.Precision.SecretsPreFilter {
@@ -122,7 +122,7 @@ deep:
 		t.Errorf("deep overrides not applied: %+v", c.Deep)
 	}
 	// Defaults still propagate to untouched fields.
-	if c.Scan.ChunkLines == 0 {
+	if c.Scan.Chunk.TargetTokens == 0 {
 		t.Error("scan defaults overwritten")
 	}
 }
@@ -241,9 +241,9 @@ func TestValidate_MinScoreOutOfRange(t *testing.T) {
 
 func TestValidate_NegativeCounters(t *testing.T) {
 	cfg := Default()
-	cfg.Precision.SymExpandHops = -1
+	cfg.Precision.InterProcMaxDepth = -1
 	if err := cfg.Validate(); err == nil {
-		t.Error("want error on negative SymExpandHops")
+		t.Error("want error on negative InterProcMaxDepth")
 	}
 }
 
