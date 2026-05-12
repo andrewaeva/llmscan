@@ -55,6 +55,14 @@ type scanFlags struct {
 	deepMaxHotspots, deepBudget, deepConc int
 	deepModel, deepProvider               string
 	deepNoCache                           bool
+
+	// monorepo support
+	vcsKind      string
+	scopeRoots   []string
+	maxFiles     int
+	astCachePath string
+	noASTCache   bool
+	astCacheClr  bool
 }
 
 func scanCmd() *cobra.Command {
@@ -203,4 +211,12 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().StringVar(&f.deepModel, "deep-model", "", "Override model id for the sub-agent (default: --model)")
 	cmd.Flags().StringVar(&f.deepProvider, "deep-provider", "", "Override provider for the sub-agent (default: --provider; supports anthropic and openai)")
 	cmd.Flags().BoolVar(&f.deepNoCache, "deep-no-cache", false, "Disable sqlite caching of sub-agent tool outputs (cached by default)")
+
+	// Monorepo flags.
+	cmd.Flags().StringVar(&f.vcsKind, "vcs", "", "VCS backend: auto | git | arc | none (default: auto-detect via .git/.arc)")
+	cmd.Flags().StringSliceVar(&f.scopeRoots, "scope-root", nil, "Restrict traversal to these sub-paths (repeatable). Absolute or relative to target.")
+	cmd.Flags().IntVar(&f.maxFiles, "max-files", 0, "Abort with error if the post-filter file count exceeds this (default 100000; 0 = unlimited)")
+	cmd.Flags().StringVar(&f.astCachePath, "ast-cache-path", "", "Override AST cache path (default .llmscan/ast-cache.db)")
+	cmd.Flags().BoolVar(&f.noASTCache, "no-ast-cache", false, "Disable the AST parse cache for this run")
+	cmd.Flags().BoolVar(&f.astCacheClr, "ast-cache-clear", false, "Wipe the AST cache before scanning")
 }

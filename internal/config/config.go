@@ -36,6 +36,11 @@ type ScanConfig struct {
 	Concurrency    int      `yaml:"concurrency,omitempty"`    // chunks in flight per single scanner agent
 	AgentParallel  int      `yaml:"agent_parallel,omitempty"` // scanner agents in flight (DAG layer)
 	FollowSymlinks bool     `yaml:"follow_symlinks,omitempty"`
+
+	// Monorepo support.
+	ScopeRoots []string `yaml:"scope_roots,omitempty"` // restrict traversal to these sub-paths
+	MaxFiles   int      `yaml:"max_files,omitempty"`   // abort with error above this count; 0 = unlimited
+	VCS        string   `yaml:"vcs,omitempty"`         // auto | git | arc | none
 }
 
 // RAGConfig controls the in-memory retrieval index.
@@ -97,6 +102,15 @@ type CacheConfig struct {
 	Path    string `yaml:"path,omitempty"`
 }
 
+// ASTCacheConfig controls the AST parse cache used to amortize tree-sitter
+// parsing across repeated scans of large repos. Enabled by default; falls
+// back to a no-op cache if the on-disk file cannot be created.
+type ASTCacheConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path,omitempty"`
+	Clear   bool   `yaml:"-"` // CLI-only: wipe before run
+}
+
 // BaselineConfig holds baseline I/O settings.
 type BaselineConfig struct {
 	Path  string `yaml:"path,omitempty"`
@@ -138,6 +152,7 @@ type Config struct {
 	Precision PrecisionConfig `yaml:"precision"`
 	Diff      DiffConfig      `yaml:"diff"`
 	Cache     CacheConfig     `yaml:"cache"`
+	ASTCache  ASTCacheConfig  `yaml:"ast_cache"`
 	Baseline  BaselineConfig  `yaml:"baseline"`
 	Deep      DeepConfig      `yaml:"deep"`
 
@@ -211,6 +226,10 @@ func Default() Config {
 			Enabled: true,
 			Path:    ".llmscan/cache.db",
 		},
+		ASTCache: ASTCacheConfig{
+			Enabled: true,
+			Path:    ".llmscan/ast-cache.db",
+		},
 		Deep: DeepConfig{
 			Enabled:      false,
 			MinSeverity:  "high",
@@ -227,6 +246,8 @@ func Default() Config {
 			Concurrency:    16,
 			AgentParallel:  8,
 			FollowSymlinks: false,
+			MaxFiles:       100000,
+			VCS:            "auto",
 			Exclude: []string{
 				".git/", "node_modules/", "vendor/", "dist/", "build/", "target/",
 				".venv/", "venv/", "__pycache__/", ".idea/", ".vscode/",

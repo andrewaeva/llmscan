@@ -12,6 +12,7 @@ import (
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/tools"
 	"github.com/andrewaeva/llmscan/internal/types"
+	"github.com/andrewaeva/llmscan/internal/vcs"
 )
 
 // runDeepPass runs the optional sub-agent verification pass over high-severity
@@ -36,6 +37,10 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, 
 	}
 	if cfg.MaxFileBytes > 0 {
 		sandbox.MaxFileBytes = cfg.MaxFileBytes
+	}
+	// Wire up VCS so the blame tool dispatches to the right backend (git/arc).
+	if v, derr := vcs.Detect(sandbox.Root); derr == nil && v != nil && v.Kind() != vcs.KindNone {
+		sandbox.VCS = v
 	}
 
 	// 2) Build a tool-capable LLM client. Falls back to default model if the

@@ -8,7 +8,7 @@
 //	read_file(path, start_line, end_line) -> {content, lines, total_lines}
 //	grep(pattern, path_glob, max_matches)  -> {matches:[{file,line,text}]}
 //	list_dir(path)                          -> {entries:[{name,type}]}
-//	git_blame(path, line)                   -> {commit, author, date, summary}
+//	blame(path, line)                       -> {commit, author, date, summary} (git or arc)
 //
 // All output is size-limited so a runaway agent cannot blow the context window.
 package tools
@@ -20,12 +20,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/andrewaeva/llmscan/internal/vcs"
 )
 
 // Defaults for output limits.
@@ -42,6 +43,10 @@ const (
 type Sandbox struct {
 	Root         string // absolute, EvalSymlinks-resolved
 	MaxFileBytes int
+
+	// VCS, when non-nil, is used by Blame. When nil, Blame falls back to a
+	// fresh vcs.Detect(Root) on first use — callers don't have to wire it up.
+	VCS vcs.VCS
 }
 
 // NewSandbox creates a sandbox rooted at the canonical form of `root`.
@@ -276,10 +281,13 @@ func (s *Sandbox) ListDir(path string) (string, error) {
 	return buf.String(), nil
 }
 
-// GitBlame runs `git blame -L line,line --porcelain path` inside the sandbox
-// and returns a compact, single-line summary. Errors when git is unavailable
-// or the file is not tracked.
-func (s *Sandbox) GitBlame(path string, line int) (string, error) {
+// Blame returns blame info for a single line, dispatching to whichever VCS
+// backend the sandbox is wired to. If no VCS is configured, the sandbox runs
+// vcs.Detect(Root) lazily so existing callers continue to work.
+//
+// The previous name was GitBlame; it's kept as a thin alias for backward
+// compatibility.
+func (s *Sandbox) Blame(path string, line int) (string, error) {
 	abs, err := s.resolve(path)
 	if err != nil {
 		return "", err
@@ -288,36 +296,38 @@ func (s *Sandbox) GitBlame(path string, line int) (string, error) {
 		line = 1
 	}
 	rel, _ := filepath.Rel(s.Root, abs)
-	ctx, cancel := contextWithTimeout(5 * time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "blame", "-L", fmt.Sprintf("%d,%d", line, line), "--porcelain", rel) //nolint:gosec // rel is resolved inside sandbox Root
-	cmd.Dir = s.Root
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git blame: %s", strings.TrimSpace(string(out)))
-	}
-	commit, author, summary, date := "", "", "", ""
-	for _, ln := range strings.Split(string(out), "\n") {
-		switch {
-		case commit == "" && len(ln) >= 40 && !strings.ContainsAny(ln[:1], " \t"):
-			commit = strings.Fields(ln)[0]
-		case strings.HasPrefix(ln, "author "):
-			author = strings.TrimPrefix(ln, "author ")
-		case strings.HasPrefix(ln, "summary "):
-			summary = strings.TrimPrefix(ln, "summary ")
-		case strings.HasPrefix(ln, "author-time "):
-			ts := strings.TrimPrefix(ln, "author-time ")
-			date = ts
+	v := s.VCS
+	if v == nil {
+		detected, derr := vcs.Detect(s.Root)
+		if derr != nil || detected == nil || detected.Kind() == vcs.KindNone {
+			return "", fmt.Errorf("blame: no VCS detected at %s", s.Root)
 		}
+		v = detected
+	}
+	ctx, cancel := contextWithTimeout(10 * time.Second)
+	defer cancel()
+	b, err := v.Blame(ctx, rel, line)
+	if err != nil {
+		return "", fmt.Errorf("%s blame: %v", v.Kind(), err)
 	}
 	res := map[string]string{
-		"commit":  commit,
-		"author":  author,
-		"date":    date,
-		"summary": summary,
+		"commit":  b.Commit,
+		"author":  b.Author,
+		"date":    b.Date,
+		"summary": b.Summary,
 		"path":    rel,
 		"line":    fmt.Sprintf("%d", line),
+		"vcs":     string(v.Kind()),
 	}
-	b, _ := json.Marshal(res)
-	return string(b), nil
+	out, _ := json.Marshal(res)
+	return string(out), nil
 }
+
+// GitBlame is preserved as a thin alias so callers outside the deep agent
+// (and tests) that still reference it keep compiling.
+//
+// Deprecated: use Blame.
+func (s *Sandbox) GitBlame(path string, line int) (string, error) {
+	return s.Blame(path, line)
+}
+

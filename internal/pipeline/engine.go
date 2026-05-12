@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 
+	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/suppress"
@@ -28,6 +29,10 @@ type Engine struct {
 	Cfg     config.Config
 	Logger  *log.Logger
 	Verbose bool
+
+	// astCache is opened lazily on first use and closed by Run via defer.
+	// A nil value is a valid no-op cache, so callers don't need to nil-check.
+	astCache *myast.Cache
 }
 
 // New returns an engine wired with a default logger.

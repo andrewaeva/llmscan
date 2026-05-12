@@ -9,7 +9,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/agents"
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/gitdiff"
 	"github.com/andrewaeva/llmscan/internal/iac"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
@@ -17,12 +16,14 @@ import (
 	"github.com/andrewaeva/llmscan/internal/skills"
 	"github.com/andrewaeva/llmscan/internal/suppress"
 	"github.com/andrewaeva/llmscan/internal/types"
+	"github.com/andrewaeva/llmscan/internal/vcs"
 	"github.com/andrewaeva/llmscan/internal/watchlist"
 )
 
 // ---- AST parsing & skills loading ----
 
 // parseASTs concurrently parses files into per-language ASTs.
+// Hits the on-disk AST cache (when enabled) keyed by content sha256+lang.
 func (e *Engine) parseASTs(ctx context.Context, files []types.FileTarget) (map[string]*myast.FileAST, []*myast.FileAST) {
 	out := make(map[string]*myast.FileAST, len(files))
 	var mu sync.Mutex
@@ -32,24 +33,36 @@ func (e *Engine) parseASTs(ctx context.Context, files []types.FileTarget) (map[s
 		conc = 4
 	}
 	sem := make(chan struct{}, conc)
+	cache := e.astCache // may be nil → no-op
 	for _, f := range files {
-		if myast.Detect(f.Path) == myast.LangUnknown {
+		lang := myast.Detect(f.Path)
+		if lang == myast.LangUnknown {
 			continue
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(f types.FileTarget) {
+		go func(f types.FileTarget, lang myast.Language) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			a, err := myast.Parse(ctx, f.Path, []byte(f.Content))
+			src := []byte(f.Content)
+			if cached, ok, _ := cache.Lookup(f.Path, src, lang); ok && cached != nil {
+				mu.Lock()
+				out[f.Path] = cached
+				mu.Unlock()
+				return
+			}
+			a, err := myast.Parse(ctx, f.Path, src)
 			if err != nil {
 				e.logf("ast %s: %v", f.Path, err)
 				return
 			}
+			if err := cache.Store(a); err != nil {
+				e.logf("ast cache store %s: %v", f.Path, err)
+			}
 			mu.Lock()
 			out[f.Path] = a
 			mu.Unlock()
-		}(f)
+		}(f, lang)
 	}
 	wg.Wait()
 	list := make([]*myast.FileAST, 0, len(out))
@@ -97,14 +110,48 @@ func (e *Engine) loadSpecialSkill(dirName string) string {
 // ---- Pre-filters and lightweight static analyses ----
 
 // applyDiffFilter narrows files to those changed in the configured diff range.
-func (e *Engine) applyDiffFilter(files []types.FileTarget, target string) []types.FileTarget {
-	if !gitdiff.IsRepo(target) {
-		e.logf("diff: %s is not a git repo, ignoring", target)
+// VCS is selected automatically (git/arc) based on filesystem markers; the
+// range may carry an explicit "git:" / "arc:" prefix to force a backend.
+func (e *Engine) applyDiffFilter(ctx context.Context, files []types.FileTarget, target string) []types.FileTarget {
+	rangeSpec, forced := vcs.SplitRange(e.Cfg.Diff.Range)
+	// An explicit --vcs flag overrides auto-detection.
+	if forced == vcs.KindNone {
+		switch e.Cfg.Scan.VCS {
+		case "git":
+			forced = vcs.KindGit
+		case "arc":
+			forced = vcs.KindArc
+		case "none":
+			forced = vcs.KindNone
+		}
+	}
+	var (
+		v   vcs.VCS
+		err error
+	)
+	switch {
+	case e.Cfg.Scan.VCS == "none" && forced == vcs.KindNone:
+		e.logf("diff: --vcs=none, skipping")
+		return files
+	case forced != vcs.KindNone:
+		// Honor the prefix even if auto-detection would have chosen something
+		// else (e.g. a repo with both .git and .arc, or scanning a sub-tree).
+		detected, _ := vcs.Detect(target)
+		root := target
+		if detected != nil && detected.Kind() == forced {
+			root = detected.Root()
+		}
+		v, err = vcs.Open(forced, root)
+	default:
+		v, err = vcs.Detect(target)
+	}
+	if err != nil || v == nil || v.Kind() == vcs.KindNone {
+		e.logf("diff: no VCS detected at %s, ignoring --diff", target)
 		return files
 	}
-	changed, err := gitdiff.ChangedFiles(target, e.Cfg.Diff.Range)
+	changed, err := v.ChangedFiles(ctx, rangeSpec)
 	if err != nil {
-		e.logf("diff: %v", err)
+		e.logf("diff (%s): %v", v.Kind(), err)
 		return files
 	}
 	set := map[string]bool{}

@@ -2,7 +2,7 @@
 //
 // Unlike regular scanners which receive a fixed code chunk + symexpand
 // context, a DeepAgent gets only a starting hotspot (file:line) and a
-// toolbox (read_file, grep, list_dir, git_blame). It drives a multi-turn
+// toolbox (read_file, grep, list_dir, blame). It drives a multi-turn
 // tool-use loop until it decides whether the finding is real, and produces
 // a structured verdict that is merged into the original Finding.
 package agents
@@ -211,7 +211,7 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 			return "", fmt.Errorf("bad args: %w", e)
 		}
 		out, err = a.Sandbox.ListDir(args.Path)
-	case "git_blame":
+	case "blame", "git_blame":
 		var args struct {
 			Path string `json:"path"`
 			Line int    `json:"line"`
@@ -219,7 +219,7 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 		if e := json.Unmarshal(call.Input, &args); e != nil {
 			return "", fmt.Errorf("bad args: %w", e)
 		}
-		out, err = a.Sandbox.GitBlame(args.Path, args.Line)
+		out, err = a.Sandbox.Blame(args.Path, args.Line)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
@@ -239,7 +239,7 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 func deepSystemPrompt() string {
 	return `You are a senior application security engineer verifying ONE candidate
 finding for llmscan via the Trail-of-Bits fp-check deep-path methodology.
-You have read-only tools (read_file, grep, list_dir, git_blame). Use them.
+You have read-only tools (read_file, grep, list_dir, blame). Use them.
 
 Step 0 — Frame the threat model:
   - What is the trust boundary the input must cross?
@@ -380,8 +380,8 @@ func deepToolDefs() []llm.ToolDef {
 			},
 		},
 		{
-			Name:        "git_blame",
-			Description: "Run git blame for a single line. Returns commit, author, date, summary.",
+			Name:        "blame",
+			Description: "VCS blame for a single line (git or arc, auto-detected). Returns commit, author, date, summary.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

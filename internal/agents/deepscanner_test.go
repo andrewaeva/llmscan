@@ -267,7 +267,7 @@ func TestDeepToolDefsShape(t *testing.T) {
 			t.Errorf("tool %s missing schema", d.Name)
 		}
 	}
-	for _, want := range []string{"read_file", "grep", "list_dir", "git_blame"} {
+	for _, want := range []string{"read_file", "grep", "list_dir", "blame"} {
 		if !names[want] {
 			t.Errorf("missing tool def %s", want)
 		}

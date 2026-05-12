@@ -466,6 +466,56 @@ Fingerprint баззлайна = `sha256(rule_id|agent|file|normalized_code)[:16
 
 ---
 
+## Monorepo support
+
+llmscan распознаёт корень репозитория по маркерам `.git/` и `.arc/`
+(Yandex Arc / Arcanum) и сам выбирает VCS-бэкенд для `--diff` и blame.
+
+```bash
+# Auto-detect (default): .git/ → git, .arc/ → arc, иначе — без VCS.
+./llmscan scan ./apps/payments --diff origin/main...HEAD
+
+# Принудительно arc, даже если рядом есть .git/:
+./llmscan scan . --diff arc:trunk..HEAD
+
+# Аналогично для git:
+./llmscan scan . --diff git:origin/main...HEAD
+
+# Явный выбор бэкенда без префикса:
+./llmscan scan . --vcs arc --diff trunk..HEAD
+```
+
+**Подграфы монорепо.** Если репозиторий огромен, ограничьте обход
+конкретными поддиректориями через `--scope-root` (можно повторять):
+
+```bash
+./llmscan scan . --scope-root apps/payments --scope-root libs/auth
+```
+
+**Защита от взрывного обхода.** Лимит на число файлов после фильтров —
+`--max-files` (по умолчанию 100000). При превышении llmscan вернёт
+ошибку с подсказкой использовать `--scope-root`.
+
+**AST cache.** Парсинг tree-sitter кешируется в sqlite по sha256+lang,
+что радикально ускоряет повторные сканы крупных репозиториев.
+Кеш включён по умолчанию; настройки:
+
+| Flag | Назначение |
+|---|---|
+| `--ast-cache-path` | Путь к файлу кеша (default `.llmscan/ast-cache.db`) |
+| `--no-ast-cache` | Отключить кеш для одного запуска |
+| `--ast-cache-clear` | Стереть кеш перед стартом |
+
+Если каталог недоступен на запись, llmscan логирует предупреждение и
+продолжает работу без кеша.
+
+**Blame в `--deep`.** Тул `blame` автоматически использует git или arc
+в зависимости от детектированного VCS; в LLM-протоколе он называется
+`blame` (старое имя `git_blame` сохранено как алиас для обратной
+совместимости).
+
+---
+
 ## Skills (scanner agents)
 
 Каждый скилл — `skills/<name>/SKILL.md` с YAML-фронтматтером и развёрнутым

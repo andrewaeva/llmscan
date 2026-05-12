@@ -240,4 +240,30 @@ func applyIOOverrides(cfg *config.Config, f *scanFlags) {
 	if f.noCache {
 		cfg.Cache.Enabled = false
 	}
+	applyMonorepoOverrides(cfg, f)
+}
+
+// applyMonorepoOverrides wires --vcs, --scope-root, --max-files and the
+// --ast-cache-* family into the config tree.
+func applyMonorepoOverrides(cfg *config.Config, f *scanFlags) {
+	if f.vcsKind != "" {
+		cfg.Scan.VCS = f.vcsKind
+	}
+	if len(f.scopeRoots) > 0 {
+		cfg.Scan.ScopeRoots = append(cfg.Scan.ScopeRoots, f.scopeRoots...)
+	}
+	// 0 means "unlimited" on the CLI for ergonomics; only override when set >0.
+	if f.maxFiles > 0 {
+		cfg.Scan.MaxFiles = f.maxFiles
+	}
+	if f.astCachePath != "" {
+		cfg.ASTCache.Path = f.astCachePath
+		cfg.ASTCache.Enabled = true
+	}
+	if f.noASTCache {
+		cfg.ASTCache.Enabled = false
+	}
+	if f.astCacheClr {
+		cfg.ASTCache.Clear = true
+	}
 }

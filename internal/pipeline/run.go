@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/baseline"
 	"github.com/andrewaeva/llmscan/internal/cache"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
@@ -32,13 +33,36 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		Stats:     types.Stats{BySeverity: map[string]int{}, ByAgent: map[string]int{}},
 	}
 
+	// 0) Open AST cache (best-effort; falls back to nil = no cache).
+	if e.Cfg.ASTCache.Enabled {
+		path := e.Cfg.ASTCache.Path
+		if path == "" {
+			path = ".llmscan/ast-cache.db"
+		}
+		if c, err := myast.OpenCache(path); err != nil {
+			e.logf("ast cache: %v (continuing without cache)", err)
+		} else {
+			e.astCache = c
+			if e.Cfg.ASTCache.Clear {
+				if err := c.Clear(); err != nil {
+					e.logf("ast cache clear: %v", err)
+				}
+			}
+			defer func() {
+				st := c.Stats()
+				e.logf("ast cache: hits=%d misses=%d stores=%d errors=%d", st.Hits, st.Misses, st.Stores, st.Errors)
+				_ = c.Close()
+			}()
+		}
+	}
+
 	// 1) Discover files.
 	files, err := e.discoverFiles(target)
 	if err != nil {
 		return report, err
 	}
 	if e.Cfg.Diff.Range != "" {
-		files = e.applyDiffFilter(files, target)
+		files = e.applyDiffFilter(ctx, files, target)
 		e.logf("diff %q: %d files in scope", e.Cfg.Diff.Range, len(files))
 	}
 	report.FilesScanned = len(files)
@@ -187,7 +211,15 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 }
 
 func (e *Engine) discoverFiles(target string) ([]types.FileTarget, error) {
-	files, err := util.Walk(target, e.Cfg.Scan.Include, e.Cfg.Scan.Exclude, e.Cfg.Scan.MaxFileBytes, e.Cfg.Scan.FollowSymlinks)
+	opts := util.WalkOptions{
+		ScopeRoots:     e.Cfg.Scan.ScopeRoots,
+		MaxFiles:       e.Cfg.Scan.MaxFiles,
+		Include:        e.Cfg.Scan.Include,
+		Exclude:        e.Cfg.Scan.Exclude,
+		MaxBytes:       e.Cfg.Scan.MaxFileBytes,
+		FollowSymlinks: e.Cfg.Scan.FollowSymlinks,
+	}
+	files, err := util.WalkScoped(target, opts)
 	if err != nil {
 		return nil, fmt.Errorf("walk: %w", err)
 	}
