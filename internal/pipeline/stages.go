@@ -229,16 +229,34 @@ func (e *Engine) runSecretsPreFilter(files []types.FileTarget) []types.Finding {
 // planStep asks the orchestrator agent for a scan plan, with graph-derived fallback.
 func (e *Engine) planStep(ctx context.Context, target string, files []types.FileTarget, g *depgraph.Graph) (types.ScanPlan, error) {
 	if !e.Cfg.IsAgentEnabled("orchestrator") {
-		return fallbackPlan(files, g), nil
+		fp := fallbackPlan(files, g)
+		e.logf("orchestrator: disabled, focus=all (%d agents)", len(fp.Focus))
+		return fp, nil
 	}
 	client, err := llm.New(e.Cfg.ResolveModel("orchestrator"))
 	if err != nil {
-		return fallbackPlan(files, g), err
+		fp := fallbackPlan(files, g)
+		e.logf("orchestrator: %v (using fallback plan, focus=all %d agents)", err, len(fp.Focus))
+		return fp, err
 	}
 	orch := &agents.Orchestrator{Client: client}
 	plan, err := orch.Plan(ctx, target, files, e.Cfg.ProjectContext)
 	if err != nil {
-		return fallbackPlan(files, g), err
+		fp := fallbackPlan(files, g)
+		e.logf("orchestrator: %v (using fallback plan, focus=all %d agents)", err, len(fp.Focus))
+		return fp, err
+	}
+	// Safety net: if planner narrowed focus too aggressively for a non-trivial
+	// project, expand to the full scanner list. The planner sees only file
+	// paths and can miss vulnerability classes that are obvious from content
+	// (e.g. deserialization, race conditions, supply-chain).
+	minFocus := 3
+	if len(files) >= 50 && len(plan.Focus) > 0 && len(plan.Focus) < minFocus {
+		e.logf("orchestrator: focus too narrow (%d agents on %d files) -> expanding to all %d",
+			len(plan.Focus), len(files), len(agents.ScannerNames))
+		plan.Focus = append([]string{}, agents.ScannerNames...)
+	} else {
+		e.logf("orchestrator: focus=%v (%d/%d agents)", plan.Focus, len(plan.Focus), len(agents.ScannerNames))
 	}
 	// Augment plan: prepend top fan-in files so high-blast-radius modules get scanned first.
 	topByFanIn := g.TopRankedByFanIn()
