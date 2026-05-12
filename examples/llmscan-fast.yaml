@@ -1,0 +1,85 @@
+# llmscan-fast.yaml
+#
+# Пресет для быстрого/дешёвого прогона через прокси с жёстким inflight-лимитом
+# (например, Eliza DeepSeek с limit=5).
+#
+# Применяет 3 оптимизации одновременно:
+#   1. Отключает скиллы, нерелевантные для бэкенд-сервисов
+#      (memory-safety, race-conditions, supply-chain, error-handling, generic).
+#   2. Укрупняет чанки → меньше LLM-запросов (target 8000 → 12000, min 500 → 2000).
+#   3. Зажимает inflight + retry под прокси с лимитами.
+#
+# Использование:
+#   cp examples/llmscan-fast.yaml ./llmscan.yaml
+#   export OPENAI_API_KEY="$SOY_TOKEN"
+#   export OPENAI_BASE_URL=https://api.eliza.yandex.net/internal/deepseek-v3-1-terminus/v1
+#   llmscan scan . --deep
+#
+# Или в одну команду без копирования:
+#   llmscan scan . --config examples/llmscan-fast.yaml --deep
+
+default_model:
+  provider: openai
+  model: default          # для Eliza-прокси: настоящая модель в URL, а в body — "default"
+  temperature: 0.1
+  max_tokens: 4096
+  api_key_env: OPENAI_API_KEY
+
+# ---------------- 1. Транспорт: inflight + retry ----------------
+llm:
+  inflight_limit: 5       # синхронно с лимитом прокси (поставь 3 если 429 всё равно лезут)
+  max_retries: 6
+  retry_base_delay_ms: 1000
+  retry_max_delay_ms: 30000
+
+# ---------------- 2. Скиллы: только релевантные ----------------
+agents:
+  injection:         { enabled: true }
+  auth:              { enabled: true }
+  crypto:            { enabled: true }
+  deserialization:   { enabled: true }
+  ssrf:              { enabled: true }
+  insecure-defaults: { enabled: true }
+  # выключенные — раздувают расход, мало пользы на типичном backend:
+  generic:           { enabled: false }
+  error-handling:    { enabled: false }
+  race-conditions:   { enabled: false }
+  memory-safety:     { enabled: false }
+  supply-chain:      { enabled: false }
+
+# ---------------- 3. Чанкер: меньше единиц ----------------
+scan:
+  agent_parallel: 4       # будет автоматически прижато к inflight_limit
+  concurrency: 8
+  chunk:
+    target_tokens: 12000  # дефолт 8000 → крупнее чанки
+    max_tokens: 20000     # дефолт 16000
+    min_tokens: 2000      # дефолт 500 → мелкие файлы склеиваются
+  context:
+    level: "balanced"     # "minimal" если хочешь ещё дешевле (теряешь немного качества)
+
+# ---------------- Точность ----------------
+precision:
+  vote_n: 0               # без N-of-K voting (1× стоимость)
+  reflexion_max_iters: 0  # без reflexion-loop
+  min_score: 0.5          # отбрасывать слабые findings
+  drop_unconfirmed: true  # дропать когда оба агента сказали "не знаю"
+  drop_impact_fail: true  # дропать defense-in-depth без security impact
+
+# ---------------- Deep ----------------
+deep:
+  enabled: true
+  min_severity: "high"    # запускать deep только на high+critical
+  max_hotspots: 10
+  budget: 20              # макс LLM-вызовов на hotspot
+  concurrency: 2
+  debate: true
+  debate_max_rounds: 1    # один раунд вместо двух
+
+# ---------------- RAG/voting/cache ----------------
+rag:
+  enabled: false          # без RAG, его main use — снижение FP на больших монорепо
+cache:
+  enabled: true
+ast_cache:
+  enabled: true
