@@ -206,7 +206,7 @@ func TestRunDeepPassDisabled(t *testing.T) {
 	cfg.Deep.Enabled = false
 	e := New(cfg)
 	in := []types.Finding{{File: "a.go", Severity: types.SevHigh}}
-	out := e.runDeepPass(context.TODO(), ".", nil, in)
+	out := e.runDeepPass(context.TODO(), ".", nil, in, nil)
 	if len(out) != 1 || out[0].DeepVerified {
 		t.Errorf("disabled pass should be no-op; got %+v", out)
 	}
@@ -216,7 +216,7 @@ func TestRunDeepPassNoFindings(t *testing.T) {
 	cfg := config.Default()
 	cfg.Deep.Enabled = true
 	e := New(cfg)
-	out := e.runDeepPass(context.TODO(), ".", nil, nil)
+	out := e.runDeepPass(context.TODO(), ".", nil, nil, nil)
 	if len(out) != 0 {
 		t.Error("empty input should remain empty")
 	}

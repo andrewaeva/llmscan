@@ -297,6 +297,17 @@ func (g *CallGraph) Callers(id NodeID) []Edge {
 	return append([]Edge(nil), g.in[id]...)
 }
 
+// NodesByName returns every NodeID whose function name matches `name` across
+// the whole project. Use this when you don't know the originating file.
+func (g *CallGraph) NodesByName(name string) []NodeID {
+	return append([]NodeID(nil), g.byName[name]...)
+}
+
+// NodesByFile returns every NodeID declared in `file`.
+func (g *CallGraph) NodesByFile(file string) []NodeID {
+	return append([]NodeID(nil), g.byFile[file]...)
+}
+
 // Callees returns outgoing edges (who id calls).
 func (g *CallGraph) Callees(id NodeID) []Edge {
 	return append([]Edge(nil), g.out[id]...)

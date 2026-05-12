@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/andrewaeva/llmscan/internal/callgraph"
+	"github.com/andrewaeva/llmscan/internal/tools"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
@@ -67,7 +68,10 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	}
 	attachTraces(final, s.taintTraces)
 	attachInterProc(final, s.interProcPaths)
-	final = e.runDeepPass(ctx, s.target, s.cacheDB, final)
+	final = e.runDeepPass(ctx, s.target, s.cacheDB, final, &tools.SymbolIndex{
+		ASTs:      s.astByPath,
+		CallGraph: s.cg,
+	})
 	if n := applyConfidence(final); n > 0 {
 		e.logf("confidence: updated %d findings", n)
 	}

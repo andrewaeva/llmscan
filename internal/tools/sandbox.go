@@ -47,6 +47,12 @@ type Sandbox struct {
 	// VCS, when non-nil, is used by Blame. When nil, Blame falls back to a
 	// fresh vcs.Detect(Root) on first use — callers don't have to wire it up.
 	VCS vcs.VCS
+
+	// Index, when non-nil, enables higher-level inspection tools defined in
+	// symbol.go (ReadSymbol, FindCallers, FindCallees, ListImports). Wire it
+	// via SetIndex from the host pipeline after the AST and call graph have
+	// been built; nil index ⇒ tools fall back to grep/read_file.
+	Index *SymbolIndex
 }
 
 // NewSandbox creates a sandbox rooted at the canonical form of `root`.

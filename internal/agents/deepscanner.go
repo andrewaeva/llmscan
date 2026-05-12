@@ -220,6 +220,41 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 			return "", fmt.Errorf("bad args: %w", e)
 		}
 		out, err = a.Sandbox.Blame(args.Path, args.Line)
+	case "read_symbol":
+		var args struct {
+			Path string `json:"path"`
+			Name string `json:"name"`
+		}
+		if e := json.Unmarshal(call.Input, &args); e != nil {
+			return "", fmt.Errorf("bad args: %w", e)
+		}
+		out, err = a.Sandbox.ReadSymbol(args.Path, args.Name)
+	case "find_callers":
+		var args struct {
+			Name     string `json:"name"`
+			MaxHits  int    `json:"max_hits"`
+		}
+		if e := json.Unmarshal(call.Input, &args); e != nil {
+			return "", fmt.Errorf("bad args: %w", e)
+		}
+		out, err = a.Sandbox.FindCallers(args.Name, args.MaxHits)
+	case "find_callees":
+		var args struct {
+			Name    string `json:"name"`
+			MaxHits int    `json:"max_hits"`
+		}
+		if e := json.Unmarshal(call.Input, &args); e != nil {
+			return "", fmt.Errorf("bad args: %w", e)
+		}
+		out, err = a.Sandbox.FindCallees(args.Name, args.MaxHits)
+	case "list_imports":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if e := json.Unmarshal(call.Input, &args); e != nil {
+			return "", fmt.Errorf("bad args: %w", e)
+		}
+		out, err = a.Sandbox.ListImports(args.Path)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
@@ -239,7 +274,15 @@ func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, er
 func deepSystemPrompt() string {
 	return `You are a senior application security engineer verifying ONE candidate
 finding for llmscan via the Trail-of-Bits fp-check deep-path methodology.
-You have read-only tools (read_file, grep, list_dir, blame). Use them.
+You have read-only tools. Use them.
+Primary toolkit:
+  - read_file(path, start_line, end_line)  — narrow ranges
+  - read_symbol(path, name)                — fetch a function body by name (preferred over read_file when you know the symbol)
+  - find_callers(name, max_hits)           — incoming call sites from the project call graph
+  - find_callees(name, max_hits)           — outgoing calls from a function (forward data-flow)
+  - list_imports(path)                     — see which libraries are in scope (helps spot framework auto-escape / sanitizers)
+  - grep(pattern, path_glob, max_matches)  — fallback for free-form lookup
+  - list_dir(path) / blame(path, line)     — for orientation and provenance
 
 Step 0 — Frame the threat model:
   - What is the trust boundary the input must cross?
@@ -389,6 +432,56 @@ func deepToolDefs() []llm.ToolDef {
 					"line": map[string]any{"type": "integer"},
 				},
 				"required": []string{"path", "line"},
+			},
+		},
+		{
+			Name: "read_symbol",
+			Description: "Read the full body of a named function/method from `path` using the AST index. " +
+				"More precise than read_file when you know the symbol name. Falls back to grep when no AST is available.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string", "description": "Project-relative file path"},
+					"name": map[string]any{"type": "string", "description": "Bare symbol name (e.g. 'HandleLogin')"},
+				},
+				"required": []string{"path", "name"},
+			},
+		},
+		{
+			Name: "find_callers",
+			Description: "List functions that call `name`, with file:line. Uses the project call graph; " +
+				"falls back to grep when the graph is unavailable. Use to assess reachability of a sink.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name":     map[string]any{"type": "string", "description": "Bare symbol name"},
+					"max_hits": map[string]any{"type": "integer", "description": "Cap on results (default 50)"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name: "find_callees",
+			Description: "List functions that `name` itself calls, with file:line. " +
+				"Use to trace data-flow forward from a source.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name":     map[string]any{"type": "string"},
+					"max_hits": map[string]any{"type": "integer"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "list_imports",
+			Description: "List the imports declared in `path`. Useful for understanding which libraries (and therefore defaults / sanitizers) are in scope.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string"},
+				},
+				"required": []string{"path"},
 			},
 		},
 	}

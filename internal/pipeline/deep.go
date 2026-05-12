@@ -23,7 +23,7 @@ import (
 // so a single failed hotspot never aborts the whole scan.
 //
 //nolint:gocyclo // sequential pipeline stages; restructure would obscure flow
-func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache, findings []types.Finding) []types.Finding {
+func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache, findings []types.Finding, idx *tools.SymbolIndex) []types.Finding {
 	cfg := e.Cfg.Deep
 	if !cfg.Enabled || len(findings) == 0 {
 		return findings
@@ -41,6 +41,11 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 	// Wire up VCS so the blame tool dispatches to the right backend (git/arc).
 	if v, derr := vcs.Detect(sandbox.Root); derr == nil && v != nil && v.Kind() != vcs.KindNone {
 		sandbox.VCS = v
+	}
+	// Wire up project indices for read_symbol / find_callers / find_callees /
+	// list_imports. When idx is nil the tools degrade to grep fallbacks.
+	if idx != nil {
+		sandbox.SetIndex(idx)
 	}
 
 	// 2) Build a tool-capable LLM client. Falls back to default model if the
