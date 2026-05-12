@@ -144,6 +144,46 @@ func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, c ty
 	return fnds
 }
 
+// planVerifyAll mirrors verifyAll but uses the PlanVerifier (plan-and-execute).
+// Plan-execute calls cost noticeably more than the one-shot verifier, so it
+// runs at a slightly lower concurrency by default.
+func (e *Engine) planVerifyAll(ctx context.Context, pv *agents.PlanVerifier, findings []types.Finding, contentByPath map[string]string) []types.Finding {
+	if pv == nil {
+		return findings
+	}
+	conc := e.Cfg.Scan.Concurrency
+	if conc <= 0 {
+		conc = 4
+	}
+	// Plan-execute spawns 1 planner call + a tool-loop per finding, so cap
+	// the concurrency at 4 even when the user picks a higher number to avoid
+	// hammering rate limits.
+	if conc > 4 {
+		conc = 4
+	}
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+	out := make([]types.Finding, len(findings))
+	for i, f := range findings {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, f types.Finding) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			snippet := snippetWithLines(contentByPath[f.File], f.StartLine, f.EndLine, 25)
+			vf, err := pv.Verify(ctx, f, snippet)
+			if err != nil {
+				e.logf("plan_verifier on %s:%d: %v", f.File, f.StartLine, err)
+				out[i] = f
+				return
+			}
+			out[i] = vf
+		}(i, f)
+	}
+	wg.Wait()
+	return out
+}
+
 // snippetWithLines returns content lines [start-pad, end+pad] formatted with line numbers.
 func snippetWithLines(content string, start, end, pad int) string {
 	if content == "" {

@@ -10,7 +10,9 @@ import (
 	"github.com/andrewaeva/llmscan/internal/iac"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/skills"
+	"github.com/andrewaeva/llmscan/internal/tools"
 	"github.com/andrewaeva/llmscan/internal/types"
+	"github.com/andrewaeva/llmscan/internal/vcs"
 )
 
 // enabledScanners computes which scanner agents (built-in + skills + IaC) should run.
@@ -99,16 +101,24 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 		}
 	}
 
-	// verifier
+	// verifier — either the standard one-shot Verifier or, when
+	// precision.plan_verify is enabled and the provider supports tool calls,
+	// a PlanVerifier that runs plan-and-execute over the same toolbox the
+	// DeepAgent uses.
 	var verifier *agents.Verifier
+	var planVerifier *agents.PlanVerifier
 	if e.Cfg.IsAgentEnabled("verifier") {
-		if cl, err := llm.New(e.Cfg.ResolveModel("verifier")); err == nil {
-			verifier = &agents.Verifier{
-				Client:         cl,
-				PromptOverride: e.loadSpecialSkill("_fpcheck-verifier"),
-			}
-		} else {
+		cl, err := llm.New(e.Cfg.ResolveModel("verifier"))
+		switch {
+		case err != nil:
 			e.logf("verifier disabled: %v", err)
+		case e.Cfg.Precision.PlanVerify:
+			planVerifier = e.maybeBuildPlanVerifier(cl, sc)
+			if planVerifier == nil {
+				verifier = &agents.Verifier{Client: cl, PromptOverride: e.loadSpecialSkill("_fpcheck-verifier")}
+			}
+		default:
+			verifier = &agents.Verifier{Client: cl, PromptOverride: e.loadSpecialSkill("_fpcheck-verifier")}
 		}
 	}
 
@@ -178,12 +188,16 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 		},
 	})
 
-	// Verifier (per-finding, parallel).
+	// Verifier (per-finding, parallel). PlanVerifier takes precedence
+	// when configured; otherwise the standard one-shot Verifier runs.
 	nodes = append(nodes, &dag.Node{
 		Name:      "verifier",
 		DependsOn: []string{"dedup"},
 		Run: func(ctx context.Context, inputs map[string]any) (any, error) {
 			fs, _ := inputs["dedup"].([]types.Finding)
+			if planVerifier != nil {
+				return e.planVerifyAll(ctx, planVerifier, fs, contentByPath), nil
+			}
 			if verifier == nil {
 				return fs, nil
 			}
@@ -207,4 +221,40 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 	})
 
 	return dag.Build(nodes)
+}
+
+// maybeBuildPlanVerifier returns a configured PlanVerifier when the provider
+// supports tool calls AND a scan target is available. Otherwise it logs the
+// reason and returns nil so the caller can fall back to the standard
+// Verifier.
+func (e *Engine) maybeBuildPlanVerifier(cl llm.Client, sc scanContext) *agents.PlanVerifier {
+	tc, ok := cl.(llm.ToolClient)
+	if !ok {
+		e.logf("plan_verify: provider %s lacks tool-call support; falling back to standard verifier", e.Cfg.ResolveModel("verifier").Provider)
+		return nil
+	}
+	if sc.target == "" {
+		e.logf("plan_verify: no scan target available; falling back to standard verifier")
+		return nil
+	}
+	sandbox, err := tools.NewSandbox(sc.target)
+	if err != nil {
+		e.logf("plan_verify: sandbox init failed: %v; falling back to standard verifier", err)
+		return nil
+	}
+	if v, derr := vcs.Detect(sandbox.Root); derr == nil && v != nil && v.Kind() != vcs.KindNone {
+		sandbox.VCS = v
+	}
+	if sc.astByPath != nil || sc.callGraph != nil {
+		sandbox.SetIndex(&tools.SymbolIndex{ASTs: sc.astByPath, CallGraph: sc.callGraph})
+	}
+	return &agents.PlanVerifier{
+		Planner:                cl,
+		Executor:               tc,
+		Sandbox:                sandbox,
+		Verbose:                e.Verbose,
+		Logf:                   e.logf,
+		ModelName:              e.Cfg.ResolveModel("verifier").Model,
+		ExecutorPromptOverride: e.loadSpecialSkill("_fpcheck-verifier"),
+	}
 }

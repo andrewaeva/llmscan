@@ -18,6 +18,7 @@ import (
 
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/calibration"
+	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/fewshot"
@@ -82,6 +83,13 @@ type scanContext struct {
 	// no bank, runScanner skips in-context examples. Populated by
 	// stageLoadFewShot.
 	fewshotBanks *fewshot.Banks
+
+	// target is the scan target root (project directory). The DAG needs it
+	// to construct sandboxes for plan-verifier and (future) other agents.
+	target string
+	// astByPath / callGraph back the SymbolIndex consumed by PlanVerifier.
+	astByPath map[string]*myast.FileAST
+	callGraph *callgraph.CallGraph
 }
 
 // chunkPackKey is the per-chunk key used to look up its ContextPack from

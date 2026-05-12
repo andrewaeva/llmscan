@@ -21,6 +21,9 @@ func stageBuildDAG(_ context.Context, e *Engine, s *runState) error {
 		suppress:        s.suppressions,
 		packsByChunkKey: s.scanCtx.packsByChunkKey,
 		fewshotBanks:    s.scanCtx.fewshotBanks,
+		target:          s.target,
+		astByPath:       s.astByPath,
+		callGraph:       s.cg,
 	}
 	for _, f := range s.prioritized {
 		sc.contentByPath[f.Path] = f.Content
