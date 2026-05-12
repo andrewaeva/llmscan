@@ -57,6 +57,7 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	}
 
 	// 1) Discover files.
+	e.prog().Stage("discover", 0)
 	files, err := e.discoverFiles(target)
 	if err != nil {
 		return report, err
@@ -66,10 +67,16 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		e.logf("diff %q: %d files in scope", e.Cfg.Diff.Range, len(files))
 	}
 	report.FilesScanned = len(files)
+	e.prog().SetTotal("discover", len(files))
+	e.prog().Inc("discover", len(files))
+	e.prog().Done("discover")
 	e.logf("discovered %d files", len(files))
 
 	// 2) Parse ASTs and build dependency graph.
+	e.prog().Stage("parse-ast", len(files))
 	astByPath, astList := e.parseASTs(ctx, files)
+	e.prog().Inc("parse-ast", len(astList))
+	e.prog().Done("parse-ast")
 	e.logf("parsed AST for %d files", len(astList))
 	graph := depgraph.New(target, astList)
 	if graph.HasCycle() {
@@ -78,14 +85,21 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 
 	// 3) Pre-filters and lightweight static analyses.
 	if e.Cfg.Precision.PreFilterWatchlist {
+		e.prog().Stage("watchlist", 0)
 		before := len(files)
 		files = e.applyWatchlistPreFilter(files, astByPath)
+		e.prog().SetTotal("watchlist", before)
+		e.prog().Inc("watchlist", before)
+		e.prog().Done("watchlist")
 		e.logf("watchlist pre-filter: %d -> %d files", before, len(files))
 	}
 	suppressions := e.collectSuppressions(files)
 	var taintTraces map[string][]taint.Trace
 	if e.Cfg.Precision.Taint {
+		e.prog().Stage("taint", len(astList))
 		taintTraces = taint.Analyze(astList)
+		e.prog().Inc("taint", len(taintTraces))
+		e.prog().Done("taint")
 		e.logf("taint: %d files analyzed", len(taintTraces))
 	}
 
@@ -97,11 +111,13 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		reachableFiles map[string]bool
 	)
 	if e.Cfg.Precision.Taint && e.Cfg.Precision.InterProc {
+		e.prog().Stage("interproc", 0)
 		cg = callgraph.Build(astList, graph)
 		entryPoints = entrypoints.Detect(astList)
 		interProcPaths = taint.AnalyzeInterProc(astList, cg, graph, entryPoints,
 			taint.Options{MaxDepth: e.Cfg.Precision.InterProcMaxDepth})
 		reachableFiles = reachableFileSet(cg, entryPoints)
+		e.prog().Done("interproc")
 		e.logf("interproc: %d entrypoints, %d nodes, %d edges, %d taint paths",
 			len(entryPoints), len(cg.Nodes), len(cg.Edges()), len(interProcPaths))
 	}
@@ -111,13 +127,18 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	}
 	var prefilterFindings []types.Finding
 	if e.Cfg.Precision.SecretsPreFilter {
+		e.prog().Stage("secrets-prefilter", len(files))
 		prefilterFindings = e.runSecretsPreFilter(files)
+		e.prog().Inc("secrets-prefilter", len(files))
+		e.prog().Done("secrets-prefilter")
 		e.logf("secrets pre-filter: %d deterministic findings", len(prefilterFindings))
 	}
 
 	// 4) Skills + orchestrator plan.
 	skillByName := e.loadSkills()
+	e.prog().Stage("orchestrator", 0)
 	plan, perr := e.planStep(ctx, target, files, graph)
+	e.prog().Done("orchestrator")
 	if perr != nil {
 		e.logf("orchestrator: %v (using fallback plan)", perr)
 	}
@@ -139,6 +160,7 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	for _, f := range prioritized {
 		chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
 	}
+	e.prog().Stage("scanners", len(chunks))
 	e.logf("scanning %d chunks across %d files", len(chunks), len(prioritized))
 
 	// 7) Assemble DAG.
@@ -170,11 +192,14 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		agentPar = max(len(enabledScanners), 4)
 	}
 	outputs, dagErrs := d.Run(ctx, agentPar)
+	e.prog().Inc("scanners", len(chunks))
+	e.prog().Done("scanners")
 	for name, err := range dagErrs {
 		e.logf("dag node %s: %v", name, err)
 	}
 
 	// 9) Collect final findings + post-processing.
+	e.prog().Stage("post-process", 0)
 	final := pickFinalFindings(outputs, &report)
 	final = append(final, prefilterFindings...)
 	e.applySuppressions(final, suppressions)
@@ -198,8 +223,12 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	if n := applyConfidence(final); n > 0 {
 		e.logf("confidence: updated %d findings", n)
 	}
+	if n := e.applyCalibration(final); n > 0 {
+		e.logf("calibration: remapped %d scores", n)
+	}
 	final = e.dropByPolicy(final, &report)
 	final = e.applyBaseline(cdb, final)
+	e.prog().Done("post-process")
 
 	for _, f := range final {
 		report.Stats.BySeverity[string(f.Severity)]++

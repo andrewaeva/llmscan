@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/andrewaeva/llmscan/internal/calibration"
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/eval"
 	"github.com/andrewaeva/llmscan/internal/pipeline"
@@ -18,16 +19,19 @@ import (
 
 func evalCmd() *cobra.Command {
 	var (
-		adapter, datasetPath, target, cfgPath, outPath, format string
-		verbose                                                bool
+		adapter, datasetPath, target, cfgPath, outPath, format, calOut string
+		verbose                                                        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "eval",
 		Short: "Run llmscan against a labeled dataset and compute precision/recall/F1",
 		Long: "eval loads ground-truth labels via a local adapter and runs the scanner against the target codebase. " +
-			"Adapters: owasp-benchmark, securityeval, juliet, generic. No network downloads are performed.",
+			"Adapters: owasp-benchmark, securityeval, juliet, generic. No network downloads are performed.\n\n" +
+			"Pass --calibrate-out PATH to also fit an isotonic calibration model on the (score, is_tp) pairs " +
+			"and write it to PATH. Use the model on subsequent scans via `scan --calibration PATH` " +
+			"to replace raw LLM confidence with empirical true-positive probability.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEval(adapter, datasetPath, target, cfgPath, outPath, format, verbose)
+			return runEval(adapter, datasetPath, target, cfgPath, outPath, format, calOut, verbose)
 		},
 	}
 	cmd.Flags().StringVar(&adapter, "adapter", "", "Dataset adapter: owasp-benchmark | securityeval | juliet | generic")
@@ -36,11 +40,12 @@ func evalCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&cfgPath, "config", "c", "", "Path to llmscan.yaml")
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "Output file (default stdout)")
 	cmd.Flags().StringVarP(&format, "format", "f", "text", "Output format: text | json")
+	cmd.Flags().StringVar(&calOut, "calibrate-out", "", "Fit an isotonic calibration model on this run's (score, is_tp) pairs and write it as JSON to PATH")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Verbose logging")
 	return cmd
 }
 
-func runEval(adapter, datasetPath, target, cfgPath, outPath, format string, verbose bool) error {
+func runEval(adapter, datasetPath, target, cfgPath, outPath, format, calOut string, verbose bool) error {
 	if adapter == "" || datasetPath == "" || target == "" {
 		return fmt.Errorf("eval requires --adapter, --dataset-path, and --target")
 	}
@@ -64,6 +69,20 @@ func runEval(adapter, datasetPath, target, cfgPath, outPath, format string, verb
 		return err
 	}
 	metrics := eval.Compare(rep.Findings, labels)
+
+	if calOut != "" {
+		samples := eval.Samples(rep.Findings, labels)
+		if len(samples) == 0 {
+			fmt.Fprintln(os.Stderr, "calibrate-out: no findings with non-zero scores; skipping fit")
+		} else {
+			model := calibration.Fit(samples)
+			if err := calibration.Save(calOut, model); err != nil {
+				return fmt.Errorf("save calibration: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "calibration: fit %d samples, %d knots, brier=%.4f → %s\n",
+				model.NSamples, len(model.Knots), model.Brier, calOut)
+		}
+	}
 
 	out, closeOut, err := openOutput(outPath)
 	if err != nil {

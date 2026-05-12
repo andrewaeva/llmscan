@@ -211,6 +211,9 @@ func applyPrecisionOverrides(cfg *config.Config, f *scanFlags) {
 	if f.minScore > 0 {
 		cfg.Precision.MinScore = f.minScore
 	}
+	if f.calibrationPath != "" {
+		cfg.Precision.CalibrationPath = f.calibrationPath
+	}
 	if f.voteN > 0 {
 		cfg.Precision.VoteN = f.voteN
 	}

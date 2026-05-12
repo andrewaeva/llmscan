@@ -16,7 +16,9 @@ import (
 	"os"
 
 	myast "github.com/andrewaeva/llmscan/internal/ast"
+	"github.com/andrewaeva/llmscan/internal/calibration"
 	"github.com/andrewaeva/llmscan/internal/config"
+	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/suppress"
 	"github.com/andrewaeva/llmscan/internal/symexpand"
@@ -33,6 +35,33 @@ type Engine struct {
 	// astCache is opened lazily on first use and closed by Run via defer.
 	// A nil value is a valid no-op cache, so callers don't need to nil-check.
 	astCache *myast.Cache
+
+	// Lazily-loaded isotonic calibration model (see Precision.CalibrationPath).
+	calModel         *calibration.Model
+	calLoadAttempted bool
+
+	// progress reports stage/chunk events to a UI surface; defaults to no-op.
+	progress progress.Reporter
+}
+
+// SetProgress installs a progress reporter. Pass nil to silence (no-op).
+// Engine takes ownership: callers should not call r.Stop() themselves; that's
+// the caller's responsibility because Stop is intentionally not invoked from
+// Run so a single reporter can span multiple Engine.Run calls if desired.
+func (e *Engine) SetProgress(r progress.Reporter) {
+	if r == nil {
+		e.progress = &progress.NoopReporter{}
+		return
+	}
+	e.progress = r
+}
+
+// prog returns the active reporter, lazily defaulting to Noop.
+func (e *Engine) prog() progress.Reporter {
+	if e.progress == nil {
+		e.progress = &progress.NoopReporter{}
+	}
+	return e.progress
 }
 
 // New returns an engine wired with a default logger.

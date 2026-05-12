@@ -15,6 +15,7 @@ import (
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
 	"github.com/andrewaeva/llmscan/internal/pipeline"
+	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/report"
 	"github.com/andrewaeva/llmscan/internal/types"
 	"github.com/andrewaeva/llmscan/internal/util"
@@ -38,11 +39,13 @@ type scanFlags struct {
 	noSecretsPF                                  bool
 	noOrchestrator, noVerifier, noFPFilter, fast bool
 	minScore                                     float64
+	calibrationPath                              string
 	voteN, voteK                                 int
 	jsonRetries                                  int
 	cachePath                                    string
 	noCache                                      bool
 	color                                        string
+	progressMode                                 string
 
 	// inter-procedural taint
 	noInterproc       bool
@@ -95,6 +98,16 @@ func runScan(target string, f *scanFlags) error {
 
 	eng := pipeline.New(cfg)
 	eng.Verbose = f.verbose
+
+	// Progress UI (TUI on TTY, plain lines in CI/pipes).
+	pmode, err := progress.ParseMode(f.progressMode)
+	if err != nil {
+		return err
+	}
+	reporter := progress.NewAuto(pmode, os.Stderr, progress.IsTerminal(os.Stderr))
+	defer reporter.Stop()
+	eng.SetProgress(reporter)
+
 	rep, err := eng.Run(ctx, target)
 	if err != nil {
 		return err
@@ -189,6 +202,8 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().IntVar(&f.interprocMaxDepth, "interproc-max-depth", 0, "Max hops for inter-procedural taint paths (default 6)")
 	cmd.Flags().BoolVar(&f.showCallGraph, "show-callgraph", false, "Print the inter-procedural call graph as DOT and exit (debug)")
 	cmd.Flags().Float64Var(&f.minScore, "min-score", 0.0, "Drop findings with Score below threshold (0..1)")
+	cmd.Flags().StringVar(&f.calibrationPath, "calibration", "", "Path to isotonic calibration model (from `llmscan eval --calibrate-out`); remaps every Score to empirical TP probability")
+	cmd.Flags().StringVar(&f.progressMode, "progress", "auto", "Progress UI: auto | tty | plain | none")
 	cmd.Flags().IntVar(&f.voteN, "vote-n", 0, "Self-consistency voting: run scanners N times (0 disables)")
 	cmd.Flags().IntVar(&f.voteK, "vote-k", 0, "Self-consistency voting: keep findings present in K of N runs (default ceil(N/2))")
 	cmd.Flags().IntVar(&f.jsonRetries, "json-retries", -1, "Structured-output retries on schema failure (default 2)")

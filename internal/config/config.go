@@ -78,6 +78,11 @@ type PrecisionConfig struct {
 	VoteK int `yaml:"vote_k,omitempty"`
 	// MinScore filters findings with Score below threshold (0..1).
 	MinScore float64 `yaml:"min_score,omitempty"`
+	// CalibrationPath points to an isotonic calibration model fitted with
+	// `llmscan eval --calibrate-out`. When set, every finding's Score is
+	// remapped through the model before --min-score is applied, so the
+	// threshold reflects empirical true-positive probability.
+	CalibrationPath string `yaml:"calibration_path,omitempty"`
 	// JSONRetries for structured-output retry feedback loop.
 	JSONRetries int `yaml:"json_retries,omitempty"`
 	// SecretsPreFilter enables regex+entropy secret detector before LLM.

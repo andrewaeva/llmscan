@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/andrewaeva/llmscan/internal/calibration"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
@@ -122,6 +123,27 @@ func Compare(predicted []types.Finding, labels []Label) Metrics {
 		s.Precision, s.Recall, s.F1 = finalize(s.TP, s.FP, s.FN)
 	}
 	return m
+}
+
+// Samples extracts (raw_score, is_true_positive) pairs for every predicted
+// finding by matching against labels on (file, cwe). The result is suitable
+// for calibration.Fit. Findings with Score == 0 are skipped (they carry no
+// confidence signal — e.g. deterministic pre-filter hits).
+func Samples(predicted []types.Finding, labels []Label) []calibration.Sample {
+	type key struct{ file, cwe string }
+	want := map[key]bool{}
+	for _, l := range labels {
+		want[key{filepath.Clean(l.File), strings.ToUpper(l.CWE)}] = true
+	}
+	out := make([]calibration.Sample, 0, len(predicted))
+	for _, f := range predicted {
+		if f.Score == 0 {
+			continue
+		}
+		k := key{filepath.Clean(f.File), strings.ToUpper(f.CWE)}
+		out = append(out, calibration.Sample{Score: f.Score, TP: want[k]})
+	}
+	return out
 }
 
 // PrintReport writes a human-readable summary to stdout.
