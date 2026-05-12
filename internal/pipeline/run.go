@@ -47,9 +47,7 @@ func (e *Engine) stages() []stage {
 		{name: "dag-build", run: stageBuildDAG},
 		{name: "scanners", run: stageRunDAG},
 		{name: "post-process", run: stagePostProcess},
-		{name: "write-knowledge",
-			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Precision.KnowledgeMemory },
-			run:  stageWriteKnowledge},
+		{name: "write-knowledge", run: stageWriteKnowledge},
 	}
 }
 

@@ -139,29 +139,17 @@ type PrecisionConfig struct {
 	// InterProcMaxDepth caps TaintPath length (default 6 when zero).
 	InterProcMaxDepth int `yaml:"interproc_max_depth,omitempty"`
 
-	// FewShotEnabled appends in-context examples from skills/<name>/examples/
-	// to the scanner prompt for each chunk. Off by default; enable per project
-	// to lift recall on domain-specific patterns.
-	FewShotEnabled bool `yaml:"fewshot,omitempty"`
-	// FewShotTopK is the maximum number of examples injected per chunk; 0 -> 3.
+	// FewShotTopK is the maximum number of in-context examples injected per
+	// chunk from skills/<name>/examples/. 0 -> default 3. Few-shot retrieval
+	// is always active when example banks exist on disk; skills without
+	// examples are a no-op.
 	FewShotTopK int `yaml:"fewshot_top_k,omitempty"`
 
-	// PlanVerify swaps the standard one-shot Verifier for a plan-and-execute
-	// verifier (planner emits investigation steps; executor uses the same
-	// deep-agent toolbox to discharge each step). Off by default.
-	PlanVerify bool `yaml:"plan_verify,omitempty"`
-
-	// Reflexion wraps shortlisted scanners in a generate → critique → revise
-	// loop. Use ReflexionSkills to restrict the wrapping to noisy skills like
-	// authz-bypass / business-state. ReflexionMaxIters caps the iterations
-	// (default 1: a single critique-revise round).
-	Reflexion         bool     `yaml:"reflexion,omitempty"`
+	// ReflexionSkills, when non-empty, restricts the generate/critique/revise
+	// loop to the listed scanners. Empty list (default) applies reflexion to
+	// every enabled scanner. ReflexionMaxIters caps the rounds (default 1).
 	ReflexionSkills   []string `yaml:"reflexion_skills,omitempty"`
 	ReflexionMaxIters int      `yaml:"reflexion_max_iters,omitempty"`
-
-	// KnowledgeMemory enables generation of .llmscan/knowledge.md after a
-	// successful scan and reuse of it as project_context on subsequent runs.
-	KnowledgeMemory bool `yaml:"knowledge_memory,omitempty"`
 }
 
 // DiffConfig configures incremental scanning.

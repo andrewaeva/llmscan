@@ -27,7 +27,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 	// precision.reflexion_skills. We reuse the scanner's own client as the
 	// critic so we don't add another model dependency by default.
 	var reflex *agents.ReflexionScanner
-	if e.Cfg.Precision.Reflexion && e.skillUsesReflexion(name) {
+	if e.skillUsesReflexion(name) {
 		iters := e.Cfg.Precision.ReflexionMaxIters
 		if iters <= 0 {
 			iters = 1

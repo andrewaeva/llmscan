@@ -101,24 +101,20 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 		}
 	}
 
-	// verifier — either the standard one-shot Verifier or, when
-	// precision.plan_verify is enabled and the provider supports tool calls,
-	// a PlanVerifier that runs plan-and-execute over the same toolbox the
-	// DeepAgent uses.
+	// verifier — try the plan-and-execute PlanVerifier first (works when the
+	// provider supports tool calls and the sandbox can be built); fall back
+	// to the standard one-shot Verifier otherwise.
 	var verifier *agents.Verifier
 	var planVerifier *agents.PlanVerifier
 	if e.Cfg.IsAgentEnabled("verifier") {
 		cl, err := llm.New(e.Cfg.ResolveModel("verifier"))
-		switch {
-		case err != nil:
+		if err != nil {
 			e.logf("verifier disabled: %v", err)
-		case e.Cfg.Precision.PlanVerify:
+		} else {
 			planVerifier = e.maybeBuildPlanVerifier(cl, sc)
 			if planVerifier == nil {
 				verifier = &agents.Verifier{Client: cl, PromptOverride: e.loadSpecialSkill("_fpcheck-verifier")}
 			}
-		default:
-			verifier = &agents.Verifier{Client: cl, PromptOverride: e.loadSpecialSkill("_fpcheck-verifier")}
 		}
 	}
 
