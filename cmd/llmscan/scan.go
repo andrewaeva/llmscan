@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -45,6 +47,8 @@ type scanFlags struct {
 	noCache                                      bool
 	color                                        string
 	progressMode                                 string
+	noTUI                                        bool
+	reportFile                                   string
 
 	// inter-procedural taint
 	noInterproc       bool
@@ -103,11 +107,22 @@ func runScan(target string, f *scanFlags) error {
 	if err != nil {
 		return err
 	}
-	reporter := progress.NewAuto(pmode, os.Stderr, progress.IsTerminal(os.Stderr))
-	defer reporter.Stop()
+	if f.noTUI && pmode != progress.ModeNone {
+		pmode = progress.ModePlain
+	}
+	// Treat stderr OR stdout being non-TTY as "no TUI": stderr is where the
+	// TUI draws, but if stdout (where the report lands) is a pipe / file the
+	// final report would race the TUI's cursor-up sequences. Plain output is
+	// safe in both cases.
+	isTTY := progress.IsTerminal(os.Stderr) && progress.IsTerminal(os.Stdout)
+	reporter := progress.NewAuto(pmode, os.Stderr, isTTY)
 	eng.SetProgress(reporter)
 
 	rep, err := eng.Run(ctx, target)
+	// Stop the reporter BEFORE printing the final report so the TUI clears
+	// its painted region first. Doing this in a deferred call would let the
+	// TUI's cursor-up sequences (lastLines clear) eat the top of the report.
+	reporter.Stop()
 	if err != nil {
 		return err
 	}
@@ -124,11 +139,67 @@ func runScan(target string, f *scanFlags) error {
 	if cerr := closeOut(); cerr != nil {
 		return cerr
 	}
+
+	// Always persist a copy of the report under <target>/.llmscan/ so the user
+	// has a reliable fallback if the terminal scroll-back is clobbered.
+	if err := writePersistedReports(target, rep, f.reportFile); err != nil {
+		// Persistence is best-effort: log and continue rather than failing
+		// the scan over an unwritable directory.
+		fmt.Fprintf(os.Stderr, "[llmscan] report: persist failed: %v\n", err)
+	}
+
 	if f.failOn != "" && shouldFail(rep, f.failOn) {
 		cancel()
 		os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
 	}
 	return nil
+}
+
+// writePersistedReports always writes <target>/.llmscan/last-report.{txt,json}
+// and, if reportFile is non-empty, also writes the text rendering there.
+// All writes are best-effort; a failure on one path does not prevent the
+// others from being attempted.
+func writePersistedReports(target string, rep types.Report, reportFile string) error {
+	dir := filepath.Join(target, ".llmscan")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+
+	txtPath := filepath.Join(dir, "last-report.txt")
+	jsonPath := filepath.Join(dir, "last-report.json")
+
+	var txtBuf, jsonBuf bytes.Buffer
+	// .llmscan/last-report.txt is read by humans in a plain editor — disable
+	// ANSI color escapes so it is grep-friendly and diff-friendly.
+	if err := report.WriteTextWith(&txtBuf, rep, report.ColorNever); err != nil {
+		return fmt.Errorf("render text: %w", err)
+	}
+	if err := report.WriteJSON(&jsonBuf, rep); err != nil {
+		return fmt.Errorf("render json: %w", err)
+	}
+
+	var firstErr error
+	writeIf := func(path string, data []byte) {
+		if err := os.WriteFile(path, data, 0o644); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	writeIf(txtPath, txtBuf.Bytes())
+	writeIf(jsonPath, jsonBuf.Bytes())
+
+	fmt.Fprintf(os.Stderr, "[llmscan] report: wrote %s (%d KB), %s (%d KB)\n",
+		txtPath, (txtBuf.Len()+1023)/1024, jsonPath, (jsonBuf.Len()+1023)/1024)
+
+	if reportFile != "" {
+		if err := os.WriteFile(reportFile, txtBuf.Bytes(), 0o644); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("write %s: %w", reportFile, err)
+		} else if err == nil {
+			fmt.Fprintf(os.Stderr, "[llmscan] report: wrote %s (%d KB)\n",
+				reportFile, (txtBuf.Len()+1023)/1024)
+		}
+	}
+
+	return firstErr
 }
 
 // runShowCallGraph parses the target, builds the call graph, and prints it as
@@ -201,6 +272,8 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().Float64Var(&f.minScore, "min-score", 0.0, "Drop findings with Score below threshold (0..1)")
 	cmd.Flags().StringVar(&f.calibrationPath, "calibration", "", "Path to isotonic calibration model (from `llmscan eval --calibrate-out`); remaps every Score to empirical TP probability")
 	cmd.Flags().StringVar(&f.progressMode, "progress", "auto", "Progress UI: auto | tty | plain | none")
+	cmd.Flags().BoolVar(&f.noTUI, "no-tui", false, "Disable the progress TUI (equivalent to --progress=plain); useful for CI and clean logs")
+	cmd.Flags().StringVar(&f.reportFile, "report-file", "", "Write the text report to this path in addition to stdout (always written to .llmscan/last-report.txt)")
 	cmd.Flags().IntVar(&f.voteN, "vote-n", 0, "Self-consistency voting: run scanners N times (0 disables)")
 	cmd.Flags().IntVar(&f.voteK, "vote-k", 0, "Self-consistency voting: keep findings present in K of N runs (default ceil(N/2))")
 	cmd.Flags().IntVar(&f.jsonRetries, "json-retries", -1, "Structured-output retries on schema failure (default 2)")

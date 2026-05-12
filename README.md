@@ -123,8 +123,16 @@ deep:
 | `--scope-root DIR` (repeat), `--max-files N` | подграфы монорепо |
 | `--no-{watchlist,symexpand,taint,reachability,cache,ast-cache}` | выключить слои |
 | `--agent-parallel N`, `--concurrency N` | параллелизм |
+| `--report-file PATH` | сохранить текстовый отчёт в файл (в дополнение к stdout) |
+| `--no-tui` | отключить прогресс-TUI (эквивалент `--progress=plain`) — для CI и для отладки |
 
 Полный список — `./llmscan scan --help`.
+
+После каждого прогона llmscan всегда дублирует финальный отчёт в
+`<target>/.llmscan/last-report.txt` (без ANSI) и
+`<target>/.llmscan/last-report.json` (полная JSON-сериализация, без обрезаний).
+Это надёжный fallback на случай если TUI или скролл терминала перекрыл часть
+findings. Дополнительная копия в произвольный путь — через `--report-file PATH`.
 
 ## Deep mode
 
