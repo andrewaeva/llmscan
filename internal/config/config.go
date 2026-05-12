@@ -150,6 +150,15 @@ type PrecisionConfig struct {
 	// every enabled scanner. ReflexionMaxIters caps the rounds (default 1).
 	ReflexionSkills   []string `yaml:"reflexion_skills,omitempty"`
 	ReflexionMaxIters int      `yaml:"reflexion_max_iters,omitempty"`
+
+	// RefineThreshold enables the map-reduce refine pass when a single file
+	// produced >= N chunks (i.e. was split). The refiner consolidates the
+	// per-chunk findings (merge duplicates, adjust severity using cross-chunk
+	// evidence, drop boilerplate). 0 disables refine entirely. Default 3.
+	RefineThreshold int `yaml:"refine_threshold,omitempty"`
+	// RefineMaxFindings caps how many findings per file the reducer sees.
+	// Above this the head is refined and the tail is passed through. Default 20.
+	RefineMaxFindings int `yaml:"refine_max_findings,omitempty"`
 }
 
 // DiffConfig configures incremental scanning.
@@ -280,6 +289,8 @@ func Default() Config {
 			SecretsPreFilter:   true,
 			InterProc:          true,
 			InterProcMaxDepth:  6,
+			RefineThreshold:    3,
+			RefineMaxFindings:  20,
 		},
 		Cache: CacheConfig{
 			Enabled: true,

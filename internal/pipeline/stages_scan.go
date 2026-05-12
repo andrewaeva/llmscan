@@ -61,6 +61,7 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	final := pickFinalFindings(s.outputs, s.report)
 	final = append(final, s.prefilterFindings...)
 	e.applySuppressions(final, s.suppressions)
+	final = e.runRefinePass(ctx, final, s.chunks)
 	if e.Cfg.Precision.Reachability {
 		idx := callgraph.BuildReach(s.astList, s.graph.CallersByFile())
 		if s.reachableFiles != nil {
