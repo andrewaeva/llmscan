@@ -193,6 +193,39 @@ Voting (опционально, когда `VoteN > 1`): сканер N раз �
 
 Deep-pass (опционально, `--deep`): для high-severity findings запускается `DeepAgent` с sandbox (`internal/tools`: read_file/grep/list_dir/blame) в multi-turn tool-use loop. Вердикт сливается в исходный Finding.
 
+## LLM transport (надёжность)
+
+Все провайдер-клиенты (`internal/llm/openai.go`, `internal/llm/openai_tools.go`,
+`internal/llm/anthropic.go`) проходят через единый chokepoint `doHTTP`
+(`internal/llm/retry.go`), который:
+
+1. **Глобальный inflight-семафор.** Один на процесс, размер берётся из
+   `LLM.InflightLimit`. Каждый HTTP-запрос ждёт слота перед `http.Do` и
+   освобождает его сразу после. Это ограничение общее для scanner-агентов,
+   verifier, fp_filter, deep-agent и debate — суммарный inflight никогда не
+   превышает заданного cap. При значении 0 семафор не создаётся (no-op fast
+   path). Используется при работе через прокси с жёстким лимитом одновременных
+   запросов (например 5 на Eliza-proxy).
+2. **Exponential backoff retry.** На `ErrRateLimit` (HTTP 429) и
+   `ErrTransient` (5xx, сетевые сбои; `ErrServer` обёрнут в `ErrTransient`,
+   так что `errors.Is(err, ErrTransient)` ловит оба) выполняется до
+   `LLM.MaxRetries` попыток (default 6). Базовая задержка `LLM.RetryBaseDelayMS`,
+   множитель 2.0, jitter ±25%, клампом `LLM.RetryMaxDelayMS`. HTTP-заголовок
+   `Retry-After` (число секунд или HTTP-date) уважается и переопределяет
+   расчётную задержку. Между попытками `ctx.Done()` прерывает sleep мгновенно.
+3. **Идемпотентная установка.** `llm.ConfigureTransport(...)` вызывается из
+   `cmd/llmscan/scan.go` один раз после `applyFlagOverrides`. `sync.Once`
+   гарантирует, что первый вызов выигрывает — повторные вызовы (в тестах /
+   скриптовых сценариях) игнорируются. Для тестов есть отдельный
+   `resetTransportForTest`, обходящий Once.
+
+CLI: `--inflight-limit N` (приоритет над yaml). YAML-секция: `llm:` с полями
+`inflight_limit`, `max_retries`, `retry_base_delay_ms`, `retry_max_delay_ms`.
+
+Когда `InflightLimit > 0`, при разборе флагов `Scan.AgentParallel` урезается
+до `max(2, InflightLimit)`: дальнейший fan-out агентов только увеличивает
+очередь у семафора без выигрыша в пропускной способности.
+
 ## Конфиденс и калибровка
 
 `pipeline/confidence.go` — детерминистический пересчёт confidence на основе:

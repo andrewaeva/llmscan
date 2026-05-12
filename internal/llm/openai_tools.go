@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -467,17 +466,31 @@ func toOAToolDecls(tools []ToolDef) []oaToolDecl {
 }
 
 // postJSON sends a POST with the openAI client's bearer auth and returns
-// raw body + status. Network errors are wrapped; status is propagated for
-// the caller to interpret (e.g. fallback on 404).
+// raw body + status. Goes through the shared inflight semaphore + retry
+// loop (retries on 429 / 5xx with backoff; honors Retry-After). The
+// returned status is propagated so the caller can still fall back to
+// Chat Completions on a 404 from the Responses API.
 func (c *openAIClient) postJSON(ctx context.Context, url string, body []byte) ([]byte, int, error) {
-	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, 0, fmt.Errorf("%s http: %w", c.label, err)
+	res, err := doHTTP(ctx, c.http, c.label, func(ctx context.Context) (*http.Request, error) {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if rerr != nil {
+			return nil, rerr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		return req, nil
+	})
+	// doHTTP returns an error for non-2xx that classifyHTTP recognised.
+	// For 404 we want the caller to inspect status and fall back, so a
+	// 404 returns an ErrBadRequest-wrapped error; convert it back to a
+	// status-only return so the existing Responses-fallback path works.
+	if err != nil && res.status != 0 && !isRetryable(err) {
+		// non-retryable HTTP error: propagate status, swallow the error
+		// (caller checks `status >= 300` itself).
+		return res.body, res.status, nil
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	return raw, resp.StatusCode, nil
+	if err != nil {
+		return nil, 0, err
+	}
+	return res.body, res.status, nil
 }

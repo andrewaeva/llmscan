@@ -111,6 +111,23 @@ func applyScanOverrides(cfg *config.Config, f *scanFlags) {
 	if f.concurrency > 0 {
 		cfg.Scan.Concurrency = f.concurrency
 	}
+	if f.inflightLimit >= 0 {
+		cfg.LLM.InflightLimit = f.inflightLimit
+	}
+	// When a strict global inflight cap is in effect, dialing scanner-agent
+	// fan-out above it just makes goroutines spin on the semaphore. Trim it
+	// down to something reasonable so progress still moves and logs stay
+	// readable. Leaves room for a couple of agents to interleave verifier/
+	// deep work without starving any single agent.
+	if cfg.LLM.InflightLimit > 0 {
+		cap0 := cfg.LLM.InflightLimit
+		if cap0 < 2 {
+			cap0 = 2
+		}
+		if cfg.Scan.AgentParallel > cap0 {
+			cfg.Scan.AgentParallel = cap0
+		}
+	}
 	if f.keepFP {
 		cfg.DropFalsePositives = false
 	}

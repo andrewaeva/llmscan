@@ -126,6 +126,7 @@ deep:
 | `--agent-parallel N`, `--concurrency N` | параллелизм |
 | `--report-file PATH` | сохранить текстовый отчёт в файл (в дополнение к stdout) |
 | `--no-tui` | отключить прогресс-TUI (эквивалент `--progress=plain`) — для CI и для отладки |
+| `--inflight-limit N` | глобальный cap concurrent LLM-запросов (0 = без лимита). Используй когда между llmscan и провайдером стоит прокси с жёстким inflight-лимитом (Eliza и т.п.) |
 
 Полный список — `./llmscan scan --help`.
 
@@ -214,7 +215,24 @@ precision / recall / F1 общие и по CWE.
 
 `llmscan.yaml` (`./llmscan init` создаст пример) переопределяет дефолты:
 `default_model`, `precision.*` (watchlist/taint/reach/voting/min_score),
-`cache`, `baseline`, `diff`, `agents.<name>`, `deep`. CLI-флаги имеют приоритет.
+`cache`, `baseline`, `diff`, `agents.<name>`, `deep`, `llm`. CLI-флаги имеют приоритет.
+
+Секция `llm:` управляет глобальным транспортом — единый inflight-семафор
+поверх всех агентов (scanner / verifier / deep / debate) и exponential-backoff
+ретрай на 429 / 5xx. Полезно когда между llmscan и провайдером стоит прокси
+с жёстким лимитом одновременных запросов:
+
+```yaml
+llm:
+  inflight_limit: 5         # 0 = без лимита (default)
+  max_retries: 6            # 1 = без ретрая
+  retry_base_delay_ms: 1000 # стартовая задержка
+  retry_max_delay_ms: 30000 # клампим экспоненту
+```
+
+CLI: `--inflight-limit N` перебивает yaml. На каждом ретрае (кроме первой
+попытки) логируется `[llm] retry K/N after Xs: <ошибка>`; HTTP-заголовок
+`Retry-After` уважается. На отмене ctx ретрай прерывается мгновенно.
 
 ## JSON-схема находки (сокращённо)
 

@@ -1,12 +1,20 @@
 package llm
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Sentinel errors used by all providers. Callers can switch on these with
 // errors.Is to make decisions (retry, backoff, surface to user, etc).
 //
 // Wrap them with fmt.Errorf("...: %w", Err...) — never replace with a string.
 var (
+	// ErrTransient indicates a temporary upstream failure that may succeed
+	// on retry (network blip, 5xx, gateway error). ErrServer wraps this so
+	// callers can retry on either with a single errors.Is check.
+	ErrTransient = errors.New("llm: transient error")
+
 	// ErrRateLimit indicates the upstream LLM provider returned a 429 or an
 	// equivalent "slow down" signal. Callers should backoff before retrying.
 	ErrRateLimit = errors.New("llm: rate limit")
@@ -16,8 +24,8 @@ var (
 	ErrAuth = errors.New("llm: authentication failed")
 
 	// ErrServer indicates the upstream LLM provider returned a 5xx and the
-	// caller may retry.
-	ErrServer = errors.New("llm: server error")
+	// caller may retry. Wraps ErrTransient.
+	ErrServer = fmt.Errorf("llm: server error: %w", ErrTransient)
 
 	// ErrBadRequest indicates a 4xx other than 401/403/429 — usually a
 	// permanent error in the request payload. Retrying will not help.
@@ -50,4 +58,13 @@ func classifyHTTP(status int) error {
 		return ErrBadRequest
 	}
 	return nil
+}
+
+// isRetryable reports whether err warrants another attempt with backoff.
+// Both rate-limit (429) and transient (5xx, network errors) qualify.
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrRateLimit) || errors.Is(err, ErrTransient)
 }

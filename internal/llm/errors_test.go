@@ -32,6 +32,9 @@ func TestClassifyHTTP(t *testing.T) {
 }
 
 func TestSentinelErrors_AreDistinct(t *testing.T) {
+	// ErrServer intentionally wraps ErrTransient so retry logic can match
+	// either with a single errors.Is check; exclude that pair from the
+	// distinctness check.
 	all := []error{
 		ErrRateLimit, ErrAuth, ErrServer, ErrBadRequest,
 		ErrEmptyResponse, ErrInvalidJSON, ErrToolHandlerNil,
@@ -45,6 +48,16 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 				t.Errorf("sentinel %v should not Is %v", a, b)
 			}
 		}
+	}
+}
+
+func TestErrServerWrapsTransient(t *testing.T) {
+	if !errors.Is(ErrServer, ErrTransient) {
+		t.Error("ErrServer should wrap ErrTransient so retry logic can match either")
+	}
+	wrapped := fmt.Errorf("upstream 503: %w", ErrServer)
+	if !errors.Is(wrapped, ErrTransient) {
+		t.Error("wrapped server error should Is ErrTransient")
 	}
 }
 

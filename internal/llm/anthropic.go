@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -351,27 +350,26 @@ func (c *anthropicClient) CompleteWithTools(ctx context.Context, req ToolRequest
 }
 
 // postMessages sends the body to /v1/messages and returns the raw response body.
+// Goes through the shared inflight semaphore + retry loop (429 / 5xx with
+// exponential backoff, honors Retry-After).
 func (c *anthropicClient) postMessages(ctx context.Context, body any) ([]byte, error) {
 	buf, _ := json.Marshal(body)
-	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(buf))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("anthropic-version", c.anthropicVersion)
-	if c.useBearer {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	} else {
-		httpReq.Header.Set("x-api-key", c.apiKey)
-	}
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic http: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		if sentinel := classifyHTTP(resp.StatusCode); sentinel != nil {
-			return nil, fmt.Errorf("anthropic http %d: %s: %w", resp.StatusCode, string(raw), sentinel)
+	res, err := doHTTP(ctx, c.http, "anthropic", func(ctx context.Context) (*http.Request, error) {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(buf))
+		if rerr != nil {
+			return nil, rerr
 		}
-		return nil, fmt.Errorf("anthropic http %d: %s", resp.StatusCode, string(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("anthropic-version", c.anthropicVersion)
+		if c.useBearer {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		} else {
+			req.Header.Set("x-api-key", c.apiKey)
+		}
+		return req, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return raw, nil
+	return res.body, nil
 }

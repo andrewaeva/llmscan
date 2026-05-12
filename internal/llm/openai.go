@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -175,21 +174,19 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 		}
 	}
 	buf, _ := json.Marshal(body)
-	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(buf))
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	resp, err := c.http.Do(httpReq)
-	if err != nil {
-		return Response{}, fmt.Errorf("%s http: %w", c.label, err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		if sentinel := classifyHTTP(resp.StatusCode); sentinel != nil {
-			return Response{}, fmt.Errorf("%s http %d: %s: %w", c.label, resp.StatusCode, string(raw), sentinel)
+	res, err := doHTTP(ctx, c.http, c.label, func(ctx context.Context) (*http.Request, error) {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(buf))
+		if rerr != nil {
+			return nil, rerr
 		}
-		return Response{}, fmt.Errorf("%s http %d: %s", c.label, resp.StatusCode, string(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		return req, nil
+	})
+	if err != nil {
+		return Response{}, err
 	}
+	raw := res.body
 	var out oaResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return Response{}, fmt.Errorf("%s decode: %w; body=%s", c.label, err, string(raw))

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
+	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/pipeline"
 	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/report"
@@ -69,6 +71,9 @@ type scanFlags struct {
 	astCachePath string
 	noASTCache   bool
 	astCacheClr  bool
+
+	// LLM transport (global inflight cap + retry)
+	inflightLimit int
 }
 
 func scanCmd() *cobra.Command {
@@ -92,6 +97,7 @@ func runScan(target string, f *scanFlags) error {
 		return err
 	}
 	applyFlagOverrides(&cfg, f)
+	configureLLMTransport(cfg)
 	if f.showCallGraph {
 		return runShowCallGraph(target, cfg)
 	}
@@ -153,6 +159,15 @@ func runScan(target string, f *scanFlags) error {
 		os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
 	}
 	return nil
+}
+
+// configureLLMTransport installs the process-wide LLM transport policy
+// (inflight cap + retry tuning) from config. Idempotent: only the first
+// call has effect, so re-runs from tests do not flip the cap.
+func configureLLMTransport(cfg config.Config) {
+	base := time.Duration(cfg.LLM.RetryBaseDelayMS) * time.Millisecond
+	maxD := time.Duration(cfg.LLM.RetryMaxDelayMS) * time.Millisecond
+	llm.ConfigureTransport(cfg.LLM.InflightLimit, cfg.LLM.MaxRetries, base, maxD)
 }
 
 // writePersistedReports always writes <target>/.llmscan/last-report.{txt,json}
@@ -304,4 +319,7 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().StringVar(&f.astCachePath, "ast-cache-path", "", "Override AST cache path (default .llmscan/ast-cache.db)")
 	cmd.Flags().BoolVar(&f.noASTCache, "no-ast-cache", false, "Disable the AST parse cache for this run")
 	cmd.Flags().BoolVar(&f.astCacheClr, "ast-cache-clear", false, "Wipe the AST cache before scanning")
+
+	// LLM transport.
+	cmd.Flags().IntVar(&f.inflightLimit, "inflight-limit", -1, "Max concurrent LLM HTTP requests across all agents (0=unlimited; overrides config). Use when scanning through a rate-limited proxy.")
 }

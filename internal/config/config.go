@@ -171,6 +171,17 @@ type PrecisionConfig struct {
 	DropImpactFail bool `yaml:"drop_impact_fail"`
 }
 
+// LLMConfig caps and tunes the shared LLM transport (global inflight
+// semaphore + exponential-backoff retry). All values are process-global —
+// every client created via llm.New observes the same caps. Useful when the
+// scanner runs behind a proxy that enforces a strict concurrent-request limit.
+type LLMConfig struct {
+	InflightLimit    int `yaml:"inflight_limit,omitempty"`      // 0 = unlimited
+	MaxRetries       int `yaml:"max_retries,omitempty"`         // default 6
+	RetryBaseDelayMS int `yaml:"retry_base_delay_ms,omitempty"` // default 1000
+	RetryMaxDelayMS  int `yaml:"retry_max_delay_ms,omitempty"`  // default 30000
+}
+
 // DiffConfig configures incremental scanning.
 type DiffConfig struct {
 	Range          string `yaml:"range,omitempty"`
@@ -234,6 +245,7 @@ type Config struct {
 	VerifierConfidenceThreshold Confidence `yaml:"verifier_min_confidence,omitempty"`
 	DropFalsePositives          bool       `yaml:"drop_false_positives,omitempty"`
 
+	LLM       LLMConfig       `yaml:"llm,omitempty"`
 	Scan      ScanConfig      `yaml:"scan"`
 	RAG       RAGConfig       `yaml:"rag"`
 	Skills    SkillsConfig    `yaml:"skills"`
@@ -317,6 +329,12 @@ func Default() Config {
 			Enabled: true,
 			Path:    ".llmscan/ast-cache.db",
 		},
+		LLM: LLMConfig{
+			InflightLimit:    0, // unlimited; set to a small int (≤proxy cap) when scanning through a rate-limited proxy
+			MaxRetries:       6,
+			RetryBaseDelayMS: 1000,
+			RetryMaxDelayMS:  30000,
+		},
 		Deep: DeepConfig{
 			Enabled:         false,
 			MinSeverity:     "high",
@@ -399,6 +417,19 @@ func (c Config) Validate() error {
 	}
 	if c.Deep.MaxHotspots < 0 || c.Deep.Budget < 0 || c.Deep.Concurrency < 0 {
 		return fmt.Errorf("deep.* counters must be >= 0")
+	}
+	if c.LLM.InflightLimit < 0 {
+		return fmt.Errorf("llm.inflight_limit=%d must be >= 0", c.LLM.InflightLimit)
+	}
+	if c.LLM.MaxRetries < 0 {
+		return fmt.Errorf("llm.max_retries=%d must be >= 0", c.LLM.MaxRetries)
+	}
+	if c.LLM.RetryBaseDelayMS < 0 || c.LLM.RetryMaxDelayMS < 0 {
+		return fmt.Errorf("llm.retry_*_ms must be >= 0")
+	}
+	if c.LLM.RetryBaseDelayMS > 0 && c.LLM.RetryMaxDelayMS > 0 && c.LLM.RetryMaxDelayMS < c.LLM.RetryBaseDelayMS {
+		return fmt.Errorf("llm.retry_max_delay_ms=%d must be >= retry_base_delay_ms=%d",
+			c.LLM.RetryMaxDelayMS, c.LLM.RetryBaseDelayMS)
 	}
 	cc := c.Scan.Chunk
 	if cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens {
