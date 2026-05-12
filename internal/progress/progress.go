@@ -292,6 +292,34 @@ func (t *TUIReporter) Logf(format string, args ...any) {
 	}
 }
 
+// Writer returns an io.Writer that callers should use for any out-of-band
+// writes to the same stream the TUI paints on (typically os.Stderr). The
+// writer first clears the painted frame, performs the write, then resets the
+// re-paint counter so the next render starts on a fresh row instead of
+// emitting cursor-up sequences that would land in the middle of the foreign
+// text. Without this coordination, a stray log.Printf between two ticks makes
+// the TUI's `\x1b[1A\x1b[2K` rise into the log line and leave the old frame
+// header stranded above — the source of duplicate `┌─ llmscan · …` lines.
+func (t *TUIReporter) Writer() io.Writer {
+	return &tuiSyncWriter{t: t}
+}
+
+type tuiSyncWriter struct {
+	t *TUIReporter
+}
+
+func (s *tuiSyncWriter) Write(p []byte) (int, error) {
+	s.t.mu.Lock()
+	defer s.t.mu.Unlock()
+	s.t.clearFrame()
+	n, err := s.t.w.Write(p)
+	// After foreign output, the next render must repaint from scratch — the
+	// terminal has scrolled and our previous-frame line count no longer maps
+	// to any real on-screen geometry.
+	s.t.lastLines = 0
+	return n, err
+}
+
 // Stop tears down the render loop and erases the rendered region entirely.
 // No "final frame" is painted: this keeps stdout clean for any text the
 // caller prints next (e.g. the final report) and prevents the last TUI frame

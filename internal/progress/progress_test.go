@@ -2,6 +2,7 @@ package progress
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -202,6 +203,47 @@ func TestTUIReporter_StopClearsFrame(t *testing.T) {
 	// No "done in" footer — Stop must not paint a final frame.
 	if strings.Contains(out, "done in ") {
 		t.Errorf("Stop() must not paint a final frame; got %q", out)
+	}
+}
+
+func TestTUIReporter_WriterCoordinatesForeignWrites(t *testing.T) {
+	// Foreign writes through Writer() must clear the painted frame before
+	// they land, and reset the re-paint counter so the next render starts
+	// fresh — otherwise the cursor-up clear sequence rises into the foreign
+	// text and the previous header is left stranded (the duplicate-box bug).
+	var buf bytes.Buffer
+	tui := NewTUI(&buf)
+	tui.Stage("scanners", 100)
+	tui.Inc("scanners", 10)
+
+	// Let one frame land.
+	time.Sleep(150 * time.Millisecond)
+
+	// Simulate a stray log line — exactly what log.Printf("[llmscan] …")
+	// does in the middle of a long scan.
+	w := tui.Writer()
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(w, "[llmscan] retry %d\n", i)
+		time.Sleep(120 * time.Millisecond)
+	}
+
+	tui.Stop()
+
+	out := buf.String()
+	// Exactly one painted header `┌─ llmscan` should be visible after the
+	// final clear-on-Stop. The render loop emits new frames over time, but
+	// each is preceded either by a cursor-up+erase or by a foreign write
+	// that drops the previous frame into scrollback — so the final visible
+	// region must collapse back to nothing.
+	if !strings.HasSuffix(out, "\x1b[1A\x1b[2K") && !strings.Contains(out, "[llmscan] retry") {
+		t.Errorf("expected coordinated foreign writes; got %q", lastN(out, 200))
+	}
+	// Foreign writes must appear in the stream.
+	for i := 0; i < 5; i++ {
+		want := fmt.Sprintf("[llmscan] retry %d", i)
+		if !strings.Contains(out, want) {
+			t.Errorf("missing foreign write %q in output", want)
+		}
 	}
 }
 

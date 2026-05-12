@@ -123,6 +123,15 @@ func runScan(target string, f *scanFlags) error {
 	isTTY := progress.IsTerminal(os.Stderr) && progress.IsTerminal(os.Stdout)
 	reporter := progress.NewAuto(pmode, os.Stderr, isTTY)
 	eng.SetProgress(reporter)
+	// Route the engine's plain `[llmscan] …` logger through the TUI's
+	// coordinated writer when one is active. Without this, log.Printf to
+	// stderr interleaves with the TUI's `\x1b[1A\x1b[2K` cursor-up sequences
+	// — the next render rises into the foreign log line, the old frame is
+	// not erased, and the header `┌─ llmscan · …` is left stranded above
+	// every subsequent paint (the duplicate-box bug).
+	if tui, ok := reporter.(*progress.TUIReporter); ok && eng.Logger != nil {
+		eng.Logger.SetOutput(tui.Writer())
+	}
 
 	rep, err := eng.Run(ctx, target)
 	// Stop the reporter BEFORE printing the final report so the TUI clears
