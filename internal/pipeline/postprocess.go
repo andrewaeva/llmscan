@@ -4,7 +4,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/baseline"
 	"github.com/andrewaeva/llmscan/internal/cache"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/suppress"
 	"github.com/andrewaeva/llmscan/internal/taint"
 	"github.com/andrewaeva/llmscan/internal/types"
@@ -175,7 +174,7 @@ func (e *Engine) applyBaseline(cdb cache.Cache, final []types.Finding) []types.F
 
 // reachableFileSet collects the set of files containing any node reachable
 // from the union of all entry points.
-func reachableFileSet(cg *callgraph.CallGraph, eps []entrypoints.Info) map[string]bool {
+func reachableFileSet(cg *callgraph.CallGraph, eps []callgraph.Info) map[string]bool {
 	if cg == nil || len(eps) == 0 {
 		return nil
 	}

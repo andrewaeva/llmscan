@@ -6,7 +6,6 @@ import (
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/taint"
 )
 
@@ -96,7 +95,7 @@ func stageTaint(_ context.Context, e *Engine, s *runState) error {
 func stageInterproc(_ context.Context, e *Engine, s *runState) error {
 	e.prog().Stage("interproc", 0)
 	s.cg = callgraph.Build(s.astList, s.graph)
-	s.entryPoints = entrypoints.Detect(s.astList)
+	s.entryPoints = callgraph.Detect(s.astList)
 	s.interProcPaths = taint.AnalyzeInterProc(s.astList, s.cg, s.graph, s.entryPoints,
 		taint.Options{MaxDepth: e.Cfg.Precision.InterProcMaxDepth})
 	s.reachableFiles = reachableFileSet(s.cg, s.entryPoints)

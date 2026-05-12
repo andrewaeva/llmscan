@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/andrewaeva/llmscan/internal/reach"
+	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
@@ -57,7 +57,7 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	final = append(final, s.prefilterFindings...)
 	e.applySuppressions(final, s.suppressions)
 	if e.Cfg.Precision.Reachability {
-		idx := reach.Build(s.astList, s.graph.CallersByFile())
+		idx := callgraph.BuildReach(s.astList, s.graph.CallersByFile())
 		if s.reachableFiles != nil {
 			idx.SetCallGraphReachable(s.reachableFiles)
 		}

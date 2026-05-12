@@ -10,7 +10,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/dag"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/skills"
 	"github.com/andrewaeva/llmscan/internal/suppress"
@@ -52,7 +51,7 @@ type runState struct {
 	suppressions      []suppress.Suppression
 	taintTraces       map[string][]taint.Trace
 	cg                *callgraph.CallGraph
-	entryPoints       []entrypoints.Info
+	entryPoints       []callgraph.Info
 	interProcPaths    []taint.TaintPath
 	reachableFiles    map[string]bool
 	prefilterFindings []types.Finding

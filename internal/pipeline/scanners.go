@@ -12,7 +12,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/types"
-	"github.com/andrewaeva/llmscan/internal/voting"
 )
 
 // runScanner runs one scanner agent over every chunk in parallel.
@@ -118,7 +117,7 @@ func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, c ty
 		if k <= 0 {
 			k = (e.Cfg.Precision.VoteN / 2) + 1
 		}
-		return voting.Aggregate(runs, k)
+		return voteAggregate(runs, k)
 	}
 	fnds, err := scanner.Scan(ctx, c, extra)
 	if err != nil {

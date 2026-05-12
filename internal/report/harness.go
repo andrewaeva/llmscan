@@ -1,26 +1,26 @@
-// Package harness produces artifacts consumable by Harness STO (Security Test Orchestration).
+// Harness STO (Security Test Orchestration) integration artifacts.
 //
 //   - STO ingests SARIF natively. We expose `WriteSTOSarif` for that path.
 //   - For pipelines we also generate a `harness-step.yaml` snippet that calls
 //     llmscan with the right flags and uploads the SARIF report.
-package harness
+
+package report
 
 import (
 	"fmt"
 	"io"
 
-	"github.com/andrewaeva/llmscan/internal/report"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
 // WriteSTOSarif emits the SARIF report Harness STO can ingest.
 // It is a thin alias kept here so users see the integration in one place.
 func WriteSTOSarif(w io.Writer, r types.Report) error {
-	return report.WriteSARIF(w, r)
+	return WriteSARIF(w, r)
 }
 
-// StepOptions configures the Harness pipeline snippet.
-type StepOptions struct {
+// HarnessStepOptions configures the Harness pipeline snippet.
+type HarnessStepOptions struct {
 	Identifier string // e.g. "llmscan_sast"
 	Name       string // e.g. "LLM SAST"
 	Image      string // docker image hosting llmscan binary
@@ -29,9 +29,10 @@ type StepOptions struct {
 	FailOn     string // critical|high|medium|low
 }
 
-// WriteStepYAML writes a Harness STO step template snippet ready to paste into a pipeline.
-// It uses the "custom_ingest" SAST step variant so STO can ingest llmscan's SARIF.
-func WriteStepYAML(w io.Writer, opt StepOptions) error {
+// WriteHarnessStepYAML writes a Harness STO step template snippet ready to
+// paste into a pipeline. It uses the "custom_ingest" SAST step variant so
+// STO can ingest llmscan's SARIF.
+func WriteHarnessStepYAML(w io.Writer, opt HarnessStepOptions) error {
 	if opt.Identifier == "" {
 		opt.Identifier = "llmscan_sast"
 	}

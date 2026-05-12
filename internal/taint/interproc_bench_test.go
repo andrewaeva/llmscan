@@ -10,10 +10,9 @@ import (
 	"github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 )
 
-func synthProject(b *testing.B, n int) (files []*ast.FileAST, cg *callgraph.CallGraph, eps []entrypoints.Info) {
+func synthProject(b *testing.B, n int) (files []*ast.FileAST, cg *callgraph.CallGraph, eps []callgraph.Info) {
 	b.Helper()
 	dir := b.TempDir()
 	for i := 0; i < n; i++ {
@@ -37,7 +36,7 @@ func C%d(s string) { db.Exec(s) }
 	}
 	g := depgraph.New(dir, files)
 	cg = callgraph.Build(files, g)
-	eps = entrypoints.Detect(files)
+	eps = callgraph.Detect(files)
 	return files, cg, eps
 }
 

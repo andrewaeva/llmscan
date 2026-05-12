@@ -1,15 +1,4 @@
-// Package entrypoints detects program entry points across supported languages.
-//
-// An entry point is any function that receives data from the outside world:
-// HTTP/gRPC handlers, CLI command bodies, message-queue consumers, scheduled
-// jobs, exported library APIs. They are the "sources of sources" for
-// inter-procedural taint analysis — every parameter is conservatively treated
-// as attacker-controllable.
-//
-// Detection is pattern-based and runs on parsed file ASTs plus the original
-// source text. We deliberately err toward over-detection: better to start a
-// few extra taint walks than miss a real entry point.
-package entrypoints
+package callgraph
 
 import (
 	"path/filepath"
@@ -18,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/andrewaeva/llmscan/internal/ast"
-	"github.com/andrewaeva/llmscan/internal/callgraph"
 )
 
 // Kind groups detected entry points by surface.
@@ -35,7 +23,7 @@ const (
 
 // Info describes one detected entry point.
 type Info struct {
-	Node           callgraph.NodeID `json:"node"`
+	Node           NodeID `json:"node"`
 	File           string           `json:"file"`
 	Func           string           `json:"func"`
 	Kind           Kind             `json:"kind"`
@@ -87,8 +75,8 @@ func Detect(files []*ast.FileAST) []Info {
 }
 
 // IDs returns the NodeIDs of all detected entry points.
-func IDs(eps []Info) []callgraph.NodeID {
-	ids := make([]callgraph.NodeID, 0, len(eps))
+func IDs(eps []Info) []NodeID {
+	ids := make([]NodeID, 0, len(eps))
 	for _, e := range eps {
 		ids = append(ids, e.Node)
 	}
@@ -159,21 +147,21 @@ func detectGo(f *ast.FileAST, src string) []Info {
 		body := sliceOf(src, s.StartLine, min(s.StartLine+4, s.EndLine))
 		switch {
 		case reGoHTTPHandler.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "net/http handler signature", ConfidenceHint: 0.95})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "net/http handler signature", ConfidenceHint: 0.95})
 		case reGoGin.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "gin handler", ConfidenceHint: 0.9})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "gin handler", ConfidenceHint: 0.9})
 		case reGoEcho.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "echo handler", ConfidenceHint: 0.9})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "echo handler", ConfidenceHint: 0.9})
 		case reGoFiber.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "fiber handler", ConfidenceHint: 0.9})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "fiber handler", ConfidenceHint: 0.9})
 		case s.Name == "main" && hasMainPkg:
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "main package entry", ConfidenceHint: 0.95})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "main package entry", ConfidenceHint: 0.95})
 		case reGoConsumer.MatchString(s.Name):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer-like name", ConfidenceHint: 0.55})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer-like name", ConfidenceHint: 0.55})
 		case strings.Contains(body, "cobra.Command") || strings.Contains(body, "RunE:") && s.Name != "":
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "cobra Run/RunE body", ConfidenceHint: 0.7})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "cobra Run/RunE body", ConfidenceHint: 0.7})
 		case isExportedGo(s.Name) && isPublicPath(f.Path):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "exported in pkg/", ConfidenceHint: 0.4})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "exported in pkg/", ConfidenceHint: 0.4})
 		}
 	}
 	return out
@@ -208,17 +196,17 @@ func detectPython(f *ast.FileAST, src string) []Info {
 		dec := previousNonBlankLine(src, s.StartLine)
 		switch {
 		case rePyRoute.MatchString(dec) || rePyFastAPI.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "@route/@get/@post decorator", ConfidenceHint: 0.9})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "@route/@get/@post decorator", ConfidenceHint: 0.9})
 		case rePyClick.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "click command", ConfidenceHint: 0.85})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "click command", ConfidenceHint: 0.85})
 		case rePyScheduled.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "scheduled/cron decorator", ConfidenceHint: 0.8})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "scheduled/cron decorator", ConfidenceHint: 0.8})
 		case rePyConsumer.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer/handler decorator", ConfidenceHint: 0.7})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer/handler decorator", ConfidenceHint: 0.7})
 		case s.Name == "main":
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "main function", ConfidenceHint: 0.6})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "main function", ConfidenceHint: 0.6})
 		case strings.HasSuffix(strings.ToLower(filepath.ToSlash(f.Path)), "__init__.py") && !strings.HasPrefix(s.Name, "_"):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "re-export from __init__.py", ConfidenceHint: 0.4})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "re-export from __init__.py", ConfidenceHint: 0.4})
 		}
 	}
 	return out
@@ -252,17 +240,17 @@ func detectJS(f *ast.FileAST, src string) []Info {
 		}
 		switch {
 		case reJSRouter.MatchString(above) || reJSRouter.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "express/koa route registration", ConfidenceHint: 0.85})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "express/koa route registration", ConfidenceHint: 0.85})
 		case reJSHandler.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "(req, res, ...) handler signature", ConfidenceHint: 0.7})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "(req, res, ...) handler signature", ConfidenceHint: 0.7})
 		case reJSKoa.MatchString(body):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "koa ctx usage", ConfidenceHint: 0.7})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "koa ctx usage", ConfidenceHint: 0.7})
 		case reJSCronWrap.MatchString(above):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "cron/setInterval wrapper", ConfidenceHint: 0.6})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "cron/setInterval wrapper", ConfidenceHint: 0.6})
 		case reJSConsumer.MatchString(s.Name):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer-like name", ConfidenceHint: 0.55})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindConsumer, Reason: "consumer-like name", ConfidenceHint: 0.55})
 		case reJSExportTop.MatchString(above + "\n" + sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "exported top-level function", ConfidenceHint: 0.4})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindExported, Reason: "exported top-level function", ConfidenceHint: 0.4})
 		}
 	}
 	_ = reJSExportedTop
@@ -303,13 +291,13 @@ func detectJava(f *ast.FileAST, src string) []Info {
 		}
 		switch {
 		case reJavaMapping.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "@*Mapping annotation", ConfidenceHint: 0.92})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "@*Mapping annotation", ConfidenceHint: 0.92})
 		case classCtrl && (strings.Contains(sig, "public") || strings.HasPrefix(strings.TrimSpace(sig), "public")):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "public method in @RestController", ConfidenceHint: 0.55})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindHTTP, Reason: "public method in @RestController", ConfidenceHint: 0.55})
 		case reJavaSched.MatchString(dec):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "@Scheduled", ConfidenceHint: 0.8})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindScheduled, Reason: "@Scheduled", ConfidenceHint: 0.8})
 		case reJavaMain.MatchString(sig):
-			out = append(out, Info{Node: callgraph.IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "public static void main", ConfidenceHint: 0.95})
+			out = append(out, Info{Node: IDOf(f.Path, s.Name), File: f.Path, Func: s.Name, Kind: KindCLI, Reason: "public static void main", ConfidenceHint: 0.95})
 		}
 	}
 	return out

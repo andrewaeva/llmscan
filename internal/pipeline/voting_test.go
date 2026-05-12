@@ -1,4 +1,4 @@
-package voting
+package pipeline
 
 import (
 	"testing"
@@ -6,35 +6,34 @@ import (
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
-func mkFinding(rule, file string, line int) types.Finding {
+func mkVoteFinding(rule, file string, line int) types.Finding {
 	return types.Finding{RuleID: rule, Agent: "scan:test", File: file, StartLine: line, Score: 0.8}
 }
 
-func TestAggregateEmpty(t *testing.T) {
-	if got := Aggregate(nil, 2); got != nil {
+func TestVoteAggregateEmpty(t *testing.T) {
+	if got := voteAggregate(nil, 2); got != nil {
 		t.Errorf("nil runs should yield nil, got %v", got)
 	}
 }
 
-func TestAggregateSingleRun(t *testing.T) {
-	runs := [][]types.Finding{{mkFinding("sql", "a.go", 10)}}
-	got := Aggregate(runs, 1)
+func TestVoteAggregateSingleRun(t *testing.T) {
+	runs := [][]types.Finding{{mkVoteFinding("sql", "a.go", 10)}}
+	got := voteAggregate(runs, 1)
 	if len(got) != 1 {
 		t.Fatalf("single run with k=1 must pass through, got %+v", got)
 	}
 }
 
-func TestAggregateMajority(t *testing.T) {
-	// 3 runs; finding A appears in all 3, B in 2, C in 1. K=2 → keep A,B.
-	a := mkFinding("sql", "a.go", 10)
-	b := mkFinding("xss", "b.go", 20)
-	c := mkFinding("ssrf", "c.go", 30)
+func TestVoteAggregateMajority(t *testing.T) {
+	a := mkVoteFinding("sql", "a.go", 10)
+	b := mkVoteFinding("xss", "b.go", 20)
+	c := mkVoteFinding("ssrf", "c.go", 30)
 	runs := [][]types.Finding{
 		{a, b, c},
 		{a, b},
 		{a},
 	}
-	got := Aggregate(runs, 2)
+	got := voteAggregate(runs, 2)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 survivors (A,B), got %d: %+v", len(got), got)
 	}
@@ -51,34 +50,32 @@ func TestAggregateMajority(t *testing.T) {
 	}
 }
 
-func TestAggregateScoreScaling(t *testing.T) {
-	a := mkFinding("sql", "a.go", 10) // score 0.8
+func TestVoteAggregateScoreScaling(t *testing.T) {
+	a := mkVoteFinding("sql", "a.go", 10)
 	runs := [][]types.Finding{{a}, {a}, {a}}
-	got := Aggregate(runs, 2)
+	got := voteAggregate(runs, 2)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 survivor, got %d", len(got))
 	}
-	// score should be 0.8 * (3/3) = 0.8
 	if got[0].Score < 0.79 || got[0].Score > 0.81 {
 		t.Errorf("score = %v, want ≈ 0.8", got[0].Score)
 	}
 }
 
-func TestAggregateLineFuzzing(t *testing.T) {
-	// Same rule, line diff <5 → bucketed together.
-	a := mkFinding("sql", "a.go", 10)
-	b := mkFinding("sql", "a.go", 12) // bucket 12/5 = 2; 10/5 = 2 → same
+func TestVoteAggregateLineFuzzing(t *testing.T) {
+	a := mkVoteFinding("sql", "a.go", 10)
+	b := mkVoteFinding("sql", "a.go", 12)
 	runs := [][]types.Finding{{a}, {b}}
-	got := Aggregate(runs, 2)
+	got := voteAggregate(runs, 2)
 	if len(got) != 1 {
 		t.Fatalf("expected fuzzy-line collapse, got %+v", got)
 	}
 }
 
-func TestAggregateDuplicateInOneRunCountsOnce(t *testing.T) {
-	a := mkFinding("sql", "a.go", 10)
-	runs := [][]types.Finding{{a, a, a}, {a}} // first run repeats; should still count as 1
-	got := Aggregate(runs, 2)
+func TestVoteAggregateDuplicateInOneRunCountsOnce(t *testing.T) {
+	a := mkVoteFinding("sql", "a.go", 10)
+	runs := [][]types.Finding{{a, a, a}, {a}}
+	got := voteAggregate(runs, 2)
 	if len(got) != 1 {
 		t.Fatalf("expected 1, got %d", len(got))
 	}
@@ -87,7 +84,7 @@ func TestAggregateDuplicateInOneRunCountsOnce(t *testing.T) {
 	}
 }
 
-func BenchmarkAggregate(b *testing.B) {
+func BenchmarkVoteAggregate(b *testing.B) {
 	mk := func(i int) types.Finding {
 		return types.Finding{RuleID: "r", Agent: "a", File: "f.go", StartLine: i, Score: 0.5}
 	}
@@ -101,6 +98,6 @@ func BenchmarkAggregate(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Aggregate(runs, 3)
+		_ = voteAggregate(runs, 3)
 	}
 }

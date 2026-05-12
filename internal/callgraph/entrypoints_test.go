@@ -1,4 +1,4 @@
-package entrypoints
+package callgraph
 
 import (
 	"context"

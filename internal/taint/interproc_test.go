@@ -8,7 +8,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 )
 
 func parseAll(t *testing.T, srcs map[string]string) []*ast.FileAST {
@@ -43,7 +42,7 @@ func C(x string) {
 	})
 	g := depgraph.New(dir, files)
 	cg := callgraph.Build(files, g)
-	eps := entrypoints.Detect(files)
+	eps := callgraph.Detect(files)
 	if len(eps) == 0 {
 		t.Fatalf("expected at least one entrypoint")
 	}
@@ -80,7 +79,7 @@ func Safe(s string) {
 	})
 	g := depgraph.New(dir, files)
 	cg := callgraph.Build(files, g)
-	eps := entrypoints.Detect(files)
+	eps := callgraph.Detect(files)
 	paths := AnalyzeInterProc(files, cg, g, eps, Options{MaxDepth: 6})
 	// Sanitizer in Safe should cut the path or mark it sanitized.
 	for _, p := range paths {
@@ -111,7 +110,7 @@ func DoWork(s string) {
 	})
 	g := depgraph.New(dir, files)
 	cg := callgraph.Build(files, g)
-	eps := entrypoints.Detect(files)
+	eps := callgraph.Detect(files)
 	paths := AnalyzeInterProc(files, cg, g, eps, Options{MaxDepth: 6})
 	// Must span both files.
 	for _, p := range paths {

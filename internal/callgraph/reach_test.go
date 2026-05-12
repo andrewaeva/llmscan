@@ -1,4 +1,4 @@
-package reach
+package callgraph
 
 import (
 	"testing"
@@ -12,7 +12,7 @@ func TestBuildAndApplyTestFile(t *testing.T) {
 		{Path: "internal/foo/foo_test.go"},
 		{Path: "internal/foo/foo.go"},
 	}
-	idx := Build(files, map[string][]string{
+	idx := BuildReach(files, map[string][]string{
 		"internal/foo/foo.go": {"caller.go"},
 	})
 	findings := []types.Finding{
@@ -33,7 +33,7 @@ func TestBuildAndApplyTestFile(t *testing.T) {
 
 func TestApplyDeadModule(t *testing.T) {
 	files := []*ast.FileAST{{Path: "pkg/unused.go"}}
-	idx := Build(files, map[string][]string{}) // no callers anywhere
+	idx := BuildReach(files, map[string][]string{}) // no callers anywhere
 	findings := []types.Finding{
 		{File: "pkg/unused.go", Score: 0.95, Confidence: types.ConfHigh},
 	}
@@ -46,7 +46,7 @@ func TestApplyDeadModule(t *testing.T) {
 }
 
 func TestApplyNilIndex(t *testing.T) {
-	var idx *Index
+	var idx *ReachIndex
 	if got := idx.Apply([]types.Finding{{}}); got != 0 {
 		t.Errorf("nil index must return 0, got %d", got)
 	}
@@ -82,7 +82,7 @@ func BenchmarkApply(b *testing.B) {
 		callers[path] = []string{"main.go"}
 		findings[i] = types.Finding{File: path, Score: 0.8, Confidence: types.ConfHigh}
 	}
-	idx := Build(files, callers)
+	idx := BuildReach(files, callers)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		idx.Apply(findings)

@@ -1,12 +1,13 @@
-// Package reach implements a simple dead-code / reachability heuristic:
+// Reachability heuristic for findings:
 //   - files under test/, tests/, fixtures/, examples/_test.go are downgraded;
 //   - functions that no other file calls (zero fan-in via depgraph) are flagged;
 //   - findings inside dead branches (`if False`, `if (false)`, after `return`) are flagged.
 //
-// The package returns a filter function used by the pipeline to mark findings
-// as low-confidence rather than dropping them, so users can opt-in via
+// Returns a filter function used by the pipeline to mark findings as
+// low-confidence rather than dropping them, so users can opt-in via
 // --min-confidence.
-package reach
+
+package callgraph
 
 import (
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 // Index summarizes per-file reachability info.
-type Index struct {
+type ReachIndex struct {
 	callersByFile map[string]int // 0 means likely unreachable
 	testFiles     map[string]bool
 	// cgReachable is the union of files reachable from detected entry points
@@ -30,7 +31,7 @@ type Index struct {
 // detected entry points (HTTP/CLI/RPC/...) via the project's call graph.
 // When set, files NOT in the map are downgraded by Apply unless they look
 // like entry points themselves.
-func (idx *Index) SetCallGraphReachable(reach map[string]bool) {
+func (idx *ReachIndex) SetCallGraphReachable(reach map[string]bool) {
 	if idx == nil {
 		return
 	}
@@ -38,8 +39,8 @@ func (idx *Index) SetCallGraphReachable(reach map[string]bool) {
 }
 
 // Build creates an index from parsed ASTs and the file->[]callers map.
-func Build(files []*ast.FileAST, callersByFile map[string][]string) *Index {
-	idx := &Index{
+func BuildReach(files []*ast.FileAST, callersByFile map[string][]string) *ReachIndex {
+	idx := &ReachIndex{
 		callersByFile: map[string]int{},
 		testFiles:     map[string]bool{},
 	}
@@ -57,7 +58,7 @@ func Build(files []*ast.FileAST, callersByFile map[string][]string) *Index {
 
 // Apply mutates findings: lowers confidence/score for clearly unreachable hits.
 // Returns the number of findings that were downgraded.
-func (idx *Index) Apply(findings []types.Finding) int {
+func (idx *ReachIndex) Apply(findings []types.Finding) int {
 	if idx == nil {
 		return 0
 	}

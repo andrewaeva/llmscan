@@ -16,13 +16,12 @@ import (
 	"github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
-	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
 // TaintPath is one source-to-sink data-flow chain across files/functions.
 type TaintPath struct {
-	Source     entrypoints.Info `json:"source"`
+	Source     callgraph.Info `json:"source"`
 	Hops       []types.TraceHop `json:"hops"`
 	Sink       SinkRef          `json:"sink"`
 	Sanitizers []SanitizerRef   `json:"sanitizers,omitempty"`
@@ -61,7 +60,7 @@ func AnalyzeInterProc(
 	files []*ast.FileAST,
 	cg *callgraph.CallGraph,
 	_ *depgraph.Graph,
-	entries []entrypoints.Info,
+	entries []callgraph.Info,
 	opts Options,
 ) []TaintPath {
 	if cg == nil {
@@ -77,7 +76,7 @@ func AnalyzeInterProc(
 	type item struct {
 		node    callgraph.NodeID
 		param   int
-		entry   entrypoints.Info
+		entry   callgraph.Info
 		hops    []types.TraceHop
 		san     []SanitizerRef
 		visited map[string]bool

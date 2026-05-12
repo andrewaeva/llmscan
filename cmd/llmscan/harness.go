@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/andrewaeva/llmscan/internal/harness"
+	"github.com/andrewaeva/llmscan/internal/report"
 )
 
 func harnessCmd() *cobra.Command {
@@ -25,7 +25,7 @@ func harnessCmd() *cobra.Command {
 				defer fh.Close()
 				w = fh
 			}
-			return harness.WriteStepYAML(w, harness.StepOptions{
+			return report.WriteHarnessStepYAML(w, report.HarnessStepOptions{
 				Identifier: id, Name: name, Image: image,
 				TargetPath: target, ConfigPath: cfg, FailOn: failOn,
 			})
