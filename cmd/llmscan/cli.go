@@ -190,9 +190,6 @@ func applyPrecisionOverrides(cfg *config.Config, f *scanFlags) {
 	if f.noWatchlist {
 		cfg.Precision.PreFilterWatchlist = false
 	}
-	if f.noSymexpand {
-		cfg.Precision.SymbolExpansion = false
-	}
 	if f.noTaint {
 		cfg.Precision.Taint = false
 	}

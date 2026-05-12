@@ -14,7 +14,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/skills"
 	"github.com/andrewaeva/llmscan/internal/suppress"
-	"github.com/andrewaeva/llmscan/internal/symexpand"
 	"github.com/andrewaeva/llmscan/internal/taint"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
@@ -28,7 +27,7 @@ import (
 //	parseAST      → ASTByPath, ASTList, Graph
 //	prefilters    → Files (filtered), Suppressions, TaintTraces,
 //	                CG, Entrypoints, InterProcPaths, ReachableFiles,
-//	                Expander, PrefilterFindings
+//	                PrefilterFindings
 //	plan          → SkillByName, Plan, Report.Plan
 //	rag+cache     → Index, CacheDB
 //	chunk+DAG     → Chunks, Prioritized, EnabledScanners, ScanCtx, DAG
@@ -56,7 +55,6 @@ type runState struct {
 	entryPoints       []entrypoints.Info
 	interProcPaths    []taint.TaintPath
 	reachableFiles    map[string]bool
-	expander          *symexpand.Expander
 	prefilterFindings []types.Finding
 
 	// Skills + plan.

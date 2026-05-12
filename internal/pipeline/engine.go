@@ -23,8 +23,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/suppress"
-	"github.com/andrewaeva/llmscan/internal/symexpand"
-	"github.com/andrewaeva/llmscan/internal/taint"
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
@@ -71,20 +69,13 @@ func New(cfg config.Config) *Engine {
 	return &Engine{Cfg: cfg, Logger: log.New(os.Stderr, "[llmscan] ", log.LstdFlags)}
 }
 
-// scanContext aggregates per-scan data the DAG nodes need.
+// scanContext aggregates per-scan data the DAG nodes need. Per-chunk extra
+// context lives in packsByChunkKey (assembled by stageBuildContextPacks).
 type scanContext struct {
-	chunks         []types.FileTarget
-	contentByPath  map[string]string
-	index          *rag.Index
-	expander       *symexpand.Expander
-	taintTraces    map[string][]taint.Trace
-	interProcPaths []taint.TaintPath
-	deps           map[string][]string
-	suppress       []suppress.Suppression
-
-	// packsByChunkKey holds the assembled ContextPack for each chunk when
-	// scan.context.enabled is true. Key = chunkPackKey(chunk). Nil disables
-	// pack-based context (runScanner falls back to legacy extra-context paths).
+	chunks          []types.FileTarget
+	contentByPath   map[string]string
+	index           *rag.Index
+	suppress        []suppress.Suppression
 	packsByChunkKey map[string]*contextpack.Pack
 }
 

@@ -35,7 +35,7 @@ type scanFlags struct {
 
 	// v3
 	diffRange, baseline, baselineWrite           string
-	noWatchlist, noSymexpand, noTaint, noReach   bool
+	noWatchlist, noTaint, noReach   bool
 	noSecretsPF                                  bool
 	noOrchestrator, noVerifier, noFPFilter, fast bool
 	minScore                                     float64
@@ -194,7 +194,6 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().StringVar(&f.baseline, "baseline", "", "Path to baseline sqlite DB; suppress findings already present")
 	cmd.Flags().StringVar(&f.baselineWrite, "baseline-write", "", "Write current findings to this baseline sqlite DB (e.g. .llmscan/baseline.db)")
 	cmd.Flags().BoolVar(&f.noWatchlist, "no-watchlist", false, "Disable per-language source/sink watchlist pre-filter")
-	cmd.Flags().BoolVar(&f.noSymexpand, "no-symexpand", false, "Disable symbol expansion (cross-function context via depgraph)")
 	cmd.Flags().BoolVar(&f.noTaint, "no-taint", false, "Disable taint analysis (source -> sanitizer -> sink chains)")
 	cmd.Flags().BoolVar(&f.noReach, "no-reachability", false, "Disable reachability downgrade (test/dead code)")
 	cmd.Flags().BoolVar(&f.noSecretsPF, "no-secrets-prefilter", false, "Disable regex+entropy secrets pre-filter")
