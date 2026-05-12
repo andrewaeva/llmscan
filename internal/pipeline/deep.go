@@ -183,7 +183,82 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 	}
 	wg.Wait()
 	e.logf("deep: pass completed in %s", time.Since(start).Round(time.Millisecond))
+
+	// Optional debate / cross-examination pass over the deep-verified
+	// findings. Cheap relative to the deep tool-loop (2-4 extra LLM calls
+	// per hotspot, no tools) and orthogonal: catches confirmation bias the
+	// single deep pass missed.
+	if cfg.Debate {
+		indices := make([]int, 0, len(hotspots))
+		for _, h := range hotspots {
+			indices = append(indices, h.i)
+		}
+		e.runDebatePass(ctx, rawClient, findings, indices)
+	}
 	return findings
+}
+
+// runDebatePass invokes the Debater on every hotspot whose deep verdict is
+// not a clear refute. Disagreement after MaxRounds applies a 0.7 score
+// penalty and tags the finding "debate-split".
+func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []types.Finding, indices []int) {
+	cfg := e.Cfg.Deep
+	maxR := cfg.DebateMaxRounds
+	if maxR <= 0 {
+		maxR = 2
+	}
+	deb := &agents.Debater{
+		Client:        cl,
+		MaxRounds:     maxR,
+		ProponentTemp: 0.3,
+		OpponentTemp:  0.6,
+		Verbose:       e.Verbose,
+		Logf:           e.logf,
+	}
+	start := time.Now()
+	var splits, agreed int
+	for _, i := range indices {
+		f := findings[i]
+		if f.FalsePositive || f.Suppressed {
+			continue
+		}
+		if f.DeepVerdict == "refuted" {
+			continue
+		}
+		res := deb.Debate(ctx, f, f.DeepComment)
+		switch res.Verdict {
+		case "split":
+			splits++
+			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-split")
+			if findings[i].Score > 0 {
+				findings[i].Score *= res.SplitPenalty
+			}
+			if findings[i].VerifierComment == "" {
+				findings[i].VerifierComment = res.Rationale
+			}
+		case "fp":
+			agreed++
+			findings[i].FalsePositive = true
+			if findings[i].FPReason == "" {
+				findings[i].FPReason = "debate consensus: " + res.Rationale
+			}
+			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-fp")
+		case "tp":
+			agreed++
+			findings[i].Tags = appendUniqueTag(findings[i].Tags, "debate-tp")
+		}
+		e.logf("debate[%d] %s:%d -> %s (rounds=%d)", i, f.File, f.StartLine, res.Verdict, res.Rounds)
+	}
+	e.logf("debate: %d agreed, %d split (in %s)", agreed, splits, time.Since(start).Round(time.Millisecond))
+}
+
+func appendUniqueTag(tags []string, v string) []string {
+	for _, t := range tags {
+		if t == v {
+			return tags
+		}
+	}
+	return append(tags, v)
 }
 
 func deepBudget(cfg config.DeepConfig) int {

@@ -203,6 +203,13 @@ type DeepConfig struct {
 	Model        string `yaml:"model,omitempty"`          // override LLM model id (empty = use default)
 	Provider     string `yaml:"provider,omitempty"`       // override provider (empty = use default)
 	MaxFileBytes int    `yaml:"max_file_bytes,omitempty"` // sandbox guard; default 512 KiB
+
+	// Debate enables a proponent/opponent cross-examination pass after the
+	// deep agent's verdict. The same model is invoked twice with different
+	// temperatures; disagreements after DebateMaxRounds rounds penalise the
+	// finding's score by 0.7 and mark it tag="debate-split". 0 disables.
+	Debate          bool `yaml:"debate,omitempty"`
+	DebateMaxRounds int  `yaml:"debate_max_rounds,omitempty"` // default 2
 }
 
 // Config is the full configuration tree.
@@ -301,13 +308,15 @@ func Default() Config {
 			Path:    ".llmscan/ast-cache.db",
 		},
 		Deep: DeepConfig{
-			Enabled:      false,
-			MinSeverity:  "high",
-			MaxHotspots:  20,
-			Budget:       40,
-			Concurrency:  4,
-			Cache:        true,
-			MaxFileBytes: 512 * 1024,
+			Enabled:         false,
+			MinSeverity:     "high",
+			MaxHotspots:     20,
+			Budget:          40,
+			Concurrency:     4,
+			Cache:           true,
+			MaxFileBytes:    512 * 1024,
+			Debate:          true,
+			DebateMaxRounds: 2,
 		},
 		Scan: ScanConfig{
 			MaxFileBytes:   256 * 1024,
