@@ -23,6 +23,24 @@ import (
 func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client, promptOverride string, chunks []types.FileTarget, _ *rag.Index, _ *agents.ContextFilter, sc scanContext) []types.Finding {
 	scanner := &agents.Scanner{Name: name, Client: client, PromptOverride: promptOverride}
 
+	// Wrap the scanner with a Reflexion loop when the skill is listed in
+	// precision.reflexion_skills. We reuse the scanner's own client as the
+	// critic so we don't add another model dependency by default.
+	var reflex *agents.ReflexionScanner
+	if e.Cfg.Precision.Reflexion && e.skillUsesReflexion(name) {
+		iters := e.Cfg.Precision.ReflexionMaxIters
+		if iters <= 0 {
+			iters = 1
+		}
+		reflex = &agents.ReflexionScanner{
+			Inner:    scanner,
+			Critic:   client,
+			MaxIters: iters,
+			Verbose:  e.Verbose,
+			Logf:     e.logf,
+		}
+	}
+
 	// Resolve few-shot bank once per scanner so we don't hit the map per chunk.
 	var bank *fewshot.Bank
 	if sc.fewshotBanks != nil {
@@ -64,7 +82,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 				}
 			}
 
-			fnds := e.scanOneChunk(ctx, scanner, c, extra)
+			fnds := e.scanOneChunk(ctx, scanner, reflex, c, extra)
 			if fnds != nil {
 				mu.Lock()
 				out = append(out, fnds...)
@@ -116,14 +134,21 @@ func (e *Engine) verifyAll(ctx context.Context, v *agents.Verifier, findings []t
 	return out
 }
 
-// scanOneChunk runs one scan request (with optional self-consistency voting)
-// and returns the resulting findings. Logs and swallows errors; nil result
-// means "nothing to add".
-func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, c types.FileTarget, extra string) []types.Finding {
+// scanOneChunk runs one scan request (with optional self-consistency voting
+// and / or reflexion) and returns the resulting findings. Logs and swallows
+// errors; nil result means "nothing to add". When `reflex` is non-nil it
+// supersedes the raw scanner for the per-iteration call.
+func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, reflex *agents.ReflexionScanner, c types.FileTarget, extra string) []types.Finding {
+	scanOnce := func() ([]types.Finding, error) {
+		if reflex != nil {
+			return reflex.Scan(ctx, c, extra)
+		}
+		return scanner.Scan(ctx, c, extra)
+	}
 	if e.Cfg.Precision.VoteN > 1 {
 		runs := make([][]types.Finding, 0, e.Cfg.Precision.VoteN)
 		for i := 0; i < e.Cfg.Precision.VoteN; i++ {
-			r, rerr := scanner.Scan(ctx, c, extra)
+			r, rerr := scanOnce()
 			if rerr != nil {
 				e.logf("scan:%s vote%d on %s: %v", scanner.Name, i, c.Path, rerr)
 				continue
@@ -136,7 +161,7 @@ func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, c ty
 		}
 		return voteAggregate(runs, k)
 	}
-	fnds, err := scanner.Scan(ctx, c, extra)
+	fnds, err := scanOnce()
 	if err != nil {
 		e.logf("scan:%s on %s: %v", scanner.Name, c.Path, err)
 		return nil

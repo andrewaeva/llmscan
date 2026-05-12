@@ -339,3 +339,19 @@ func embedderName(e rag.Embedder) string {
 	}
 	return e.Name()
 }
+
+// skillUsesReflexion reports whether the given scanner name is listed in
+// precision.reflexion_skills. An empty list means "apply to all enabled
+// scanners".
+func (e *Engine) skillUsesReflexion(name string) bool {
+	list := e.Cfg.Precision.ReflexionSkills
+	if len(list) == 0 {
+		return true
+	}
+	for _, n := range list {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
