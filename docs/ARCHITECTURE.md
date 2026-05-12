@@ -99,7 +99,7 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 13 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
 | 14 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
 | 15 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
-| 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, `dropSecretFindings` (safety-net: любой finding с "secret" в `RuleID`/`Agent` отбрасывается), **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, stats |
+| 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, `dropSecretFindings` (safety-net: любой finding с "secret" в `RuleID`/`Agent` отбрасывается), **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, `dropUnconfirmedFindings` (отбрасывает finding, если и verifier, и deep вернули `inconclusive`/пусто), stats |
 | 17 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
@@ -223,7 +223,7 @@ Deep-pass (опционально, `--deep`): для high-severity findings за
 - `scan.{include,exclude,scope_roots,max_files,vcs}` — границы обхода
 - `scan.chunk.{target_tokens,max_tokens,min_tokens,fallback_lines}` — адаптивный чанкер
 - `scan.context.{level,budget_tokens,*_hops,*_max,include_*,*_max}` — ContextPack
-- `precision.{watchlist,taint,interproc,reach,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters,refine_threshold,refine_max_findings}` — переключатели, пороги и тюнинг LangChain-паттернов
+- `precision.{watchlist,taint,interproc,reach,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters,refine_threshold,refine_max_findings,drop_unconfirmed}` — переключатели, пороги и тюнинг LangChain-паттернов (`drop_unconfirmed` дефолт `true` — отбрасывает finding с `inconclusive` от обоих агентов)
 - `rag.{enabled,provider,model,top_k,batch_size}` — retrieval
 - `cache.{enabled,path}`, `ast_cache.{enabled,path}` — SQLite кэши
 - `baseline.{path,write}` — сравнение с прошлым прогоном

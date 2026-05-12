@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"strings"
+
 	"github.com/andrewaeva/llmscan/internal/baseline"
 	"github.com/andrewaeva/llmscan/internal/cache"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
@@ -127,6 +129,36 @@ func applyGuardDowngrade(f *types.Finding, guarded bool, guardKind, sanitizerID 
 		f.Confidence = types.ConfMedium
 	} else if f.Confidence == "" {
 		f.Confidence = types.ConfMedium
+	}
+}
+
+// dropUnconfirmedFindings discards findings where both the verifier and the
+// deep agent returned an inconclusive verdict (or never ran). When neither
+// LLM could confirm or refute exploitability, the finding is noise. Findings
+// that received any decisive verdict from either agent — confirmed,
+// true_positive, refuted, false_positive — pass through unchanged
+// (refuted/fp are handled by the existing false-positive filter).
+func dropUnconfirmedFindings(in []types.Finding) []types.Finding {
+	out := in[:0]
+	for _, f := range in {
+		if isUnconfirmed(f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func isUnconfirmed(f types.Finding) bool {
+	return isUnclearVerdict(f.VerifierVerdict) && isUnclearVerdict(f.DeepVerdict)
+}
+
+func isUnclearVerdict(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "inconclusive", "unknown":
+		return true
+	default:
+		return false
 	}
 }
 

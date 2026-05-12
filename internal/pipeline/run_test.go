@@ -93,6 +93,10 @@ func configForServer(t *testing.T, srvURL string) config.Config {
 	cfg.Precision.Reachability = false
 	cfg.Precision.PreFilterWatchlist = false
 	cfg.Precision.VoteN = 0
+	// Synthetic tests do not always exercise the real verifier path, so the
+	// resulting findings may carry an empty/inconclusive verdict. Disable the
+	// unconfirmed-finding filter so test assertions still observe them.
+	cfg.Precision.DropUnconfirmed = false
 	cfg.Deep.Enabled = false
 	cfg.DropFalsePositives = true
 	cfg.Scan.MaxFileBytes = 1 << 20

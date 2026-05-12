@@ -103,6 +103,7 @@ precision:
   reflexion_max_iters: 2
   refine_threshold: 3       # ≥ N findings на файл → запустить reducer
   refine_max_findings: 20   # верхняя граница на reducer-вход
+  drop_unconfirmed: true    # отбросить finding, если и verifier, и deep сказали inconclusive
 
 deep:
   debate: true              # включить дебаты в --deep

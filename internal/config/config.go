@@ -157,6 +157,11 @@ type PrecisionConfig struct {
 	// RefineMaxFindings caps how many findings per file the reducer sees.
 	// Above this the head is refined and the tail is passed through. Default 20.
 	RefineMaxFindings int `yaml:"refine_max_findings,omitempty"`
+
+	// DropUnconfirmed drops findings where both the verifier and the deep
+	// agent returned inconclusive verdicts (or never ran). Such findings are
+	// noise: no LLM could confirm or refute exploitability. Default true.
+	DropUnconfirmed bool `yaml:"drop_unconfirmed"`
 }
 
 // DiffConfig configures incremental scanning.
@@ -294,6 +299,7 @@ func Default() Config {
 			InterProcMaxDepth:  6,
 			RefineThreshold:    3,
 			RefineMaxFindings:  20,
+			DropUnconfirmed:    true,
 		},
 		Cache: CacheConfig{
 			Enabled: true,

@@ -78,6 +78,13 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 		ASTs:      s.astByPath,
 		CallGraph: s.cg,
 	})
+	if e.Cfg.Precision.DropUnconfirmed {
+		before := len(final)
+		final = dropUnconfirmedFindings(final)
+		if dropped := before - len(final); dropped > 0 {
+			e.logf("dropped %d unconfirmed findings (verifier=inconclusive && deep=inconclusive)", dropped)
+		}
+	}
 	if n := applyConfidence(final); n > 0 {
 		e.logf("confidence: updated %d findings", n)
 	}
