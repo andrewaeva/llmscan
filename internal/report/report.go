@@ -106,7 +106,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		fmt.Fprintf(w, "%s %s\n", label("owasp:"), p.yellow(f.OWASP))
 	}
 	if f.Description != "" {
-		fmt.Fprintf(w, "%s %s\n", label("why:"), oneLine(f.Description))
+		fmt.Fprintf(w, "%s %s\n", label("why:"), oneLineFull(f.Description))
 	}
 	if f.VerifierComment != "" {
 		verdict := f.VerifierVerdict
@@ -117,7 +117,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		case "false_positive", "fp":
 			vc = p.green(verdict)
 		}
-		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLine(f.VerifierComment), vc)
+		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLineLimit(f.VerifierComment, 800), vc)
 	}
 	if f.DeepVerified {
 		vc := p.gray(f.DeepVerdict)
@@ -129,7 +129,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		case "inconclusive":
 			vc = p.yellow(f.DeepVerdict)
 		}
-		dc := oneLine(f.DeepComment)
+		dc := oneLineLimit(f.DeepComment, 800)
 		fmt.Fprintf(w, "%s %s (%s, %d tool calls)\n", label("deep:"), dc, vc, len(f.DeepTrace))
 	}
 	if f.Gates != nil && f.Gates.AnyEvaluated() {
@@ -206,12 +206,23 @@ func gateLabel(p palette, g types.Gate) string {
 }
 
 func oneLine(s string) string {
+	return oneLineLimit(s, 240)
+}
+
+func oneLineLimit(s string, max int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 240 {
-		s = s[:240] + "..."
+	if max > 0 && len(s) > max {
+		s = s[:max] + "..."
 	}
 	return s
+}
+
+// oneLineFull collapses whitespace but never truncates. Used for the `why`
+// field — the most informative line in a finding, where cutting at 240 chars
+// hides exactly the context reviewers need.
+func oneLineFull(s string) string {
+	return oneLineLimit(s, 0)
 }
 
 // ---------- SARIF ----------

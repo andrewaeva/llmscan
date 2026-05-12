@@ -85,6 +85,13 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 			e.logf("dropped %d unconfirmed findings (verifier=inconclusive && deep=inconclusive)", dropped)
 		}
 	}
+	if e.Cfg.Precision.DropImpactFail {
+		before := len(final)
+		final = dropImpactFailFindings(final)
+		if dropped := before - len(final); dropped > 0 {
+			e.logf("dropped %d findings (impact gate = fail)", dropped)
+		}
+	}
 	if n := applyConfidence(final); n > 0 {
 		e.logf("confidence: updated %d findings", n)
 	}

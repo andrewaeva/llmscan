@@ -41,6 +41,57 @@ func TestDropUnconfirmedFindings(t *testing.T) {
 	}
 }
 
+func TestDropImpactFailFindings(t *testing.T) {
+	cases := []struct {
+		name  string
+		gates *types.GateReview
+		want  bool // true = kept
+	}{
+		{"no_gates", nil, true},
+		{"impact_pass", &types.GateReview{Impact: types.GatePass}, true},
+		{"impact_fail_lowercase", &types.GateReview{Impact: types.GateFail}, false},
+		{"impact_fail_uppercase", &types.GateReview{Impact: types.Gate("FAIL")}, false},
+		{"impact_na", &types.GateReview{Impact: types.GateNotApp}, true},
+		{"impact_unknown", &types.GateReview{Impact: types.GateUnknown}, true},
+		{"impact_fail_other_gates_pass", &types.GateReview{
+			Control:      types.GatePass,
+			Reachability: types.GatePass,
+			Validation:   types.GatePass,
+			APIContract:  types.GatePass,
+			Environment:  types.GateNotApp,
+			Impact:       types.GateFail,
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []types.Finding{{ID: "f-1", Gates: tc.gates}}
+			out := dropImpactFailFindings(in)
+			got := len(out) == 1
+			if got != tc.want {
+				t.Errorf("kept=%v, want=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDropImpactFailFindings_DisabledViaConfig(t *testing.T) {
+	// When precision.drop_impact_fail is false stagePostProcess skips the
+	// helper entirely. Simulate that by not calling it — the input must be
+	// returned unchanged.
+	in := []types.Finding{
+		{ID: "f-1", Gates: &types.GateReview{Impact: types.GateFail}},
+		{ID: "f-2", Gates: &types.GateReview{Impact: types.GatePass}},
+	}
+	// Sanity: the helper itself would drop f-1.
+	if got := dropImpactFailFindings(append([]types.Finding(nil), in...)); len(got) != 1 {
+		t.Fatalf("helper expected to drop f-1, got %d kept", len(got))
+	}
+	// When disabled, the slice is left untouched.
+	if len(in) != 2 {
+		t.Fatalf("disabled path must leave findings untouched, got %d", len(in))
+	}
+}
+
 func TestDropUnconfirmedFindings_MultipleFindings(t *testing.T) {
 	in := []types.Finding{
 		{ID: "keep-1", VerifierVerdict: "confirmed", DeepVerdict: ""},

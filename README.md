@@ -104,6 +104,7 @@ precision:
   refine_threshold: 3       # ≥ N findings на файл → запустить reducer
   refine_max_findings: 20   # верхняя граница на reducer-вход
   drop_unconfirmed: true    # отбросить finding, если и verifier, и deep сказали inconclusive
+  drop_impact_fail: true    # отбросить finding, если impact gate = fail (verifier явно сказал «no security impact»)
 
 deep:
   debate: true              # включить дебаты в --deep
@@ -143,8 +144,9 @@ Read-only tools: `read_file`, `grep`, `list_dir`, `blame` — все sandbox'н�
 hotspot — `--deep-budget` (default 40), кеш в `.llmscan/cache.db`.
 
 Verdict через six gates (Trail of Bits fp-check): control, reachability,
-validation, api, environment, impact. Если провален только impact —
-`defense_in_depth=true`, severity → low.
+validation, api, environment, impact. Findings с `impact gate = fail`
+отбрасываются на стадии post-process (см. `precision.drop_impact_fail`,
+дефолт `true`) — verifier явно сказал, что security-impact нет.
 
 ```bash
 ./llmscan scan . --deep --verbose

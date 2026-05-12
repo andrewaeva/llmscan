@@ -153,6 +153,30 @@ func isUnconfirmed(f types.Finding) bool {
 	return isUnclearVerdict(f.VerifierVerdict) && isUnclearVerdict(f.DeepVerdict)
 }
 
+// dropImpactFailFindings discards findings whose Impact gate (Gate 6 in the
+// Trail of Bits fp-check methodology) is FAIL. A failing impact gate means
+// the verifier explicitly concluded the bug has no security impact —
+// defense-in-depth at best, not an actionable security finding. Findings
+// without a gate review attached are left untouched: there is no evidence to
+// act on, so downstream filters decide.
+func dropImpactFailFindings(in []types.Finding) []types.Finding {
+	out := in[:0]
+	for _, f := range in {
+		if hasImpactGateFail(f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func hasImpactGateFail(f types.Finding) bool {
+	if f.Gates == nil {
+		return false
+	}
+	return types.NormalizeGate(string(f.Gates.Impact)) == types.GateFail
+}
+
 func isUnclearVerdict(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "inconclusive", "unknown":

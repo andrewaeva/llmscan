@@ -162,6 +162,13 @@ type PrecisionConfig struct {
 	// agent returned inconclusive verdicts (or never ran). Such findings are
 	// noise: no LLM could confirm or refute exploitability. Default true.
 	DropUnconfirmed bool `yaml:"drop_unconfirmed"`
+
+	// DropImpactFail drops findings whose Impact gate (Gate 6 in the
+	// Trail-of-Bits fp-check methodology) is FAIL. A failing impact gate
+	// means the verifier explicitly concluded the bug has no security
+	// impact — defense-in-depth rather than an actionable security finding.
+	// Default true.
+	DropImpactFail bool `yaml:"drop_impact_fail"`
 }
 
 // DiffConfig configures incremental scanning.
@@ -300,6 +307,7 @@ func Default() Config {
 			RefineThreshold:    3,
 			RefineMaxFindings:  20,
 			DropUnconfirmed:    true,
+			DropImpactFail:     true,
 		},
 		Cache: CacheConfig{
 			Enabled: true,
