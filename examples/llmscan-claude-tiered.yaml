@@ -1,0 +1,54 @@
+# Claude через Eliza, tiered:
+#   - дешёвая Haiku 4.5 для широкого сканирования (все скан-агенты + orchestrator)
+#   - дорогая Sonnet 4.5 для verifier, fp_filter и deep (включая debate)
+#
+# Все остальные дефолты llmscan сохранены (drop_unconfirmed, drop_impact_fail,
+# chunk/precision/scan настройки — как в коде).
+#
+# ENV: ANTHROPIC_API_KEY=<eliza-token>
+#
+# Ориентировочная экономия по сравнению с "все Sonnet": ~50-60% на токенах,
+# т.к. ~80% запросов идёт на широких скан-агентах (cheap), а только финальные
+# verifier/deep — на дорогой модели.
+
+default_model:
+  provider: anthropic
+  model: claude-haiku-4-5
+  base_url: https://api.eliza.yandex.net/raw/anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  temperature: 0.1
+  max_tokens: 4096
+
+agents:
+  verifier:
+    enabled: true
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      base_url: https://api.eliza.yandex.net/raw/anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.1
+      max_tokens: 4096
+  fp_filter:
+    enabled: true
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      base_url: https://api.eliza.yandex.net/raw/anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.1
+      max_tokens: 4096
+
+deep:
+  enabled: true
+  # deep наследует DefaultModel (Eliza base_url + ANTHROPIC_API_KEY) и
+  # переопределяет только имя модели на дорогую Sonnet.
+  # Debater использует тот же клиент, что и deep, поэтому он тоже на Sonnet.
+  model: claude-sonnet-4-6
+  provider: anthropic
+
+llm:
+  inflight_limit: 10
+  max_retries: 6
+  retry_base_delay_ms: 1000
+  retry_max_delay_ms: 30000
