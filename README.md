@@ -50,10 +50,42 @@ go build -o llmscan ./cmd/llmscan
 
 ```
 discover → parse-ast → depgraph → diff-filter → watchlist →
-taint → symexpand → secrets-prefilter → orchestrator → RAG →
-[scanners ∥ + IaC] → dedup → verifier → fp_filter →
-suppress → reachability → deep (optional) → score-filter →
-baseline → report (text|json|sarif)
+taint → symexpand → secrets-prefilter → load-knowledge →
+orchestrator → RAG → [scanners ∥ + IaC] → dedup → verifier →
+fp_filter → suppress → reachability → deep (optional) →
+score-filter → baseline → write-knowledge → report
+```
+
+## Что внутри (LangChain-паттерны, всегда включены)
+
+Пять паттернов работают по умолчанию, без feature-flag'ов:
+
+1. **Extended DeepAgent tools** — поверх `read_file`/`grep`/`list_dir`/`blame`
+   агент имеет символический индекс: `read_symbol`, `find_callers`,
+   `find_callees`, `list_imports`. Меньше прохождений по файлу, точнее ходы.
+2. **Few-shot retrieval** — для каждого скилла можно положить
+   `skills/<name>/examples/*.json` (поля `code`, `label`, `comment`, `language`).
+   Top-K (`precision.fewshot_top_k`, дефолт 3) отбирается через 3-gram Jaccard
+   с фильтром по языку и инжектится в промпт сканера.
+3. **Plan-and-Execute Verifier** — когда провайдер поддерживает tool-calls,
+   verifier планирует шаги и исполняет их через тот же sandbox, что и
+   DeepAgent. Если sandbox не строится или модель без tool-calls — автоматом
+   откатываемся к одноразовому Verifier.
+4. **Project knowledge memory** — `<target>/.llmscan/knowledge.md` (≤ 8 KB)
+   подгружается в orchestrator-промпт и обновляется после прогона авто-саммари
+   по самым частым rule_id × file. Сохраняется между запусками.
+5. **Reflexion loop** — для шумных скиллов из `precision.reflexion_skills`
+   сканер крутит `generate → critique → revise` до
+   `precision.reflexion_max_iters` итераций (дефолт 1) тем же клиентом, что и
+   сам сканер. Тюнинг — белый список скиллов, чтобы не платить за каждый.
+
+Настройка в `llmscan.yaml`:
+
+```yaml
+precision:
+  fewshot_top_k: 3
+  reflexion_skills: [injection, auth, race-conditions]
+  reflexion_max_iters: 2
 ```
 
 ## Ключевые флаги

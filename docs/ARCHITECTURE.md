@@ -93,14 +93,16 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 6 | `taint` | `stages_static.go` | `!Taint` | intra-file taint трассировки |
 | 7 | `interproc` | `stages_static.go` | `!Taint || !InterProc` | call-graph + function summaries + IFDS-light |
 | 8 | `secrets-prefilter` | `stages_static.go` | `!SecretsPreFilter` | regex+entropy секреты до LLM |
-| 9 | `orchestrator` | `stages_static.go` | — | LLM-планировщик: focus агентов + priority файлов; fallback по fan-in |
-| 10 | `rag` | `stages_static.go` | `!RAG.Enabled` | embeddings или keyword index |
-| 11 | `cache` | `stages_static.go` | — | открывает SQLite-кэш вердиктов LLM |
-| 12 | `chunk` | `stages_chunk.go` | — | adaptive chunker: группирует symbols до TargetTokens, hard-cap MaxTokens |
-| 13 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
-| 14 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter |
-| 15 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting |
-| 16 | `post-process` | `postprocess.go` | — | reachability downgrade, dedupe, suppress, calibration, baseline, deep-pass, stats |
+| 9 | `load-knowledge` | `stages_static.go` | — | читает `<target>/.llmscan/knowledge.md` (≤ 8 KB) для инъекции в orchestrator-промпт |
+| 10 | `orchestrator` | `stages_static.go` | — | LLM-планировщик: focus агентов + priority файлов; здесь же загружаются few-shot banks |
+| 11 | `rag` | `stages_static.go` | `!RAG.Enabled` | embeddings или keyword index |
+| 12 | `cache` | `stages_static.go` | — | открывает SQLite-кэш вердиктов LLM |
+| 13 | `chunk` | `stages_chunk.go` | — | adaptive chunker: группирует symbols до TargetTokens, hard-cap MaxTokens |
+| 14 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
+| 15 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
+| 16 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
+| 17 | `post-process` | `postprocess.go` | — | reachability downgrade, dedupe, suppress, calibration, baseline, deep-pass, stats |
+| 18 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
 
@@ -139,6 +141,18 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 ```
 
 `agents.ScannerNames` — канонический список встроенных сканеров. Dynamic skills из `skills/*/SKILL.md` подхватываются `enabledScanners` и автоматически попадают в DAG. Каждый сканер получает chunk + ContextPack как extra-context.
+
+## LangChain-паттерны (всегда включены)
+
+Пять паттернов работают по умолчанию, feature-flag'ов у них нет. Остались только тюнинг-поля в `precision.*`.
+
+| Паттерн | Пакет | Что делает | Тюнинг |
+|---|---|---|---|
+| Extended DeepAgent tools | `internal/tools` (`symbol.go`, `sandbox.go`) | поверх read_file/grep/list_dir/blame агент имеет `read_symbol`, `find_callers`, `find_callees`, `list_imports` поверх `SymbolIndex` | — |
+| Few-shot retrieval | `internal/fewshot` | `Banks.LoadFromSkillDirs` читает `skills/<name>/examples/*.json`; `Bank.Retrieve` — 3-gram Jaccard с опц. языковым фильтром; top-K инжектится в scanner-промпт | `precision.fewshot_top_k` (дефолт 3) |
+| Plan-and-Execute Verifier | `internal/agents/plan_verifier.go` | вместо одноразового Verifier — `Planner → Executor` tool-loop поверх sandbox-а DeepAgent. При отсутствии tool-calls / sandbox — фоллбэк на обычный Verifier | — |
+| Knowledge memory | `internal/knowledge` | `<target>/.llmscan/knowledge.md` (≤8 KB) читается в `load-knowledge`, пишется в `write-knowledge` как top-N rule_id × file | — |
+| Reflexion loop | `internal/agents/reflexion.go` | оборачивает scanner в `generate → critique → revise` тем же клиентом, что и сам сканер | `precision.reflexion_skills` (белый список), `precision.reflexion_max_iters` (дефолт 1) |
 
 ## ContextPack: как формируется промпт сканера
 
@@ -211,7 +225,7 @@ Deep-pass (опционально, `--deep`): для high-severity findings за
 - `scan.{include,exclude,scope_roots,max_files,vcs}` — границы обхода
 - `scan.chunk.{target_tokens,max_tokens,min_tokens,fallback_lines}` — адаптивный чанкер
 - `scan.context.{level,budget_tokens,*_hops,*_max,include_*,*_max}` — ContextPack
-- `precision.{watchlist,taint,interproc,reach,secrets,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries}` — переключатели и пороги
+- `precision.{watchlist,taint,interproc,reach,secrets,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters}` — переключатели, пороги и тюнинг LangChain-паттернов
 - `rag.{enabled,provider,model,top_k,batch_size}` — retrieval
 - `cache.{enabled,path}`, `ast_cache.{enabled,path}` — SQLite кэши
 - `baseline.{path,write}` — сравнение с прошлым прогоном
