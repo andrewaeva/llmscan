@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/andrewaeva/llmscan/internal/agents"
+	"github.com/andrewaeva/llmscan/internal/fewshot"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/types"
@@ -21,6 +22,17 @@ import (
 // the raw chunk without extra context.
 func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client, promptOverride string, chunks []types.FileTarget, _ *rag.Index, _ *agents.ContextFilter, sc scanContext) []types.Finding {
 	scanner := &agents.Scanner{Name: name, Client: client, PromptOverride: promptOverride}
+
+	// Resolve few-shot bank once per scanner so we don't hit the map per chunk.
+	var bank *fewshot.Bank
+	if sc.fewshotBanks != nil {
+		bank = sc.fewshotBanks.Bank(name)
+	}
+	topK := e.Cfg.Precision.FewShotTopK
+	if topK <= 0 {
+		topK = 3
+	}
+
 	conc := e.Cfg.Scan.Concurrency
 	if conc <= 0 {
 		conc = 8
@@ -44,6 +56,11 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 			if sc.packsByChunkKey != nil {
 				if p, ok := sc.packsByChunkKey[chunkPackKey(c)]; ok && p != nil {
 					extra = p.Render()
+				}
+			}
+			if bank != nil {
+				if ex := bank.Retrieve(c.Content, topK, c.Language); len(ex) > 0 {
+					extra += fewshot.RenderPrompt(ex)
 				}
 			}
 

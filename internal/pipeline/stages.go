@@ -9,6 +9,7 @@ import (
 	"github.com/andrewaeva/llmscan/internal/agents"
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
+	"github.com/andrewaeva/llmscan/internal/fewshot"
 	"github.com/andrewaeva/llmscan/internal/iac"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
@@ -87,6 +88,22 @@ func (e *Engine) loadSkills() map[string]*skills.Skill {
 		}
 	}
 	return out
+}
+
+// loadFewShotBanks builds the per-skill few-shot example registry by scanning
+// skills/<name>/examples/*.json across every configured skills dir.
+// Returns a non-nil Banks even if no examples were found, so callers can
+// safely call .Bank() without nil checks.
+func (e *Engine) loadFewShotBanks() *fewshot.Banks {
+	b := fewshot.New()
+	errs := b.LoadFromSkillDirs(e.Cfg.Skills.Dirs)
+	for _, err := range errs {
+		e.logf("fewshot: %v", err)
+	}
+	if names := b.SkillNames(); len(names) > 0 && e.Verbose {
+		e.logf("fewshot: loaded banks for %d skill(s): %v", len(names), names)
+	}
+	return b
 }
 
 // loadSpecialSkill resolves a special skill (folder starts with "_") across

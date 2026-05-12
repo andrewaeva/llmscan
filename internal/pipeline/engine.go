@@ -20,6 +20,7 @@ import (
 	"github.com/andrewaeva/llmscan/internal/calibration"
 	"github.com/andrewaeva/llmscan/internal/config"
 	"github.com/andrewaeva/llmscan/internal/contextpack"
+	"github.com/andrewaeva/llmscan/internal/fewshot"
 	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/suppress"
@@ -77,6 +78,10 @@ type scanContext struct {
 	index           *rag.Index
 	suppress        []suppress.Suppression
 	packsByChunkKey map[string]*contextpack.Pack
+	// fewshotBanks is the per-skill bank registry. When nil or the skill has
+	// no bank, runScanner skips in-context examples. Populated by
+	// stageLoadFewShot.
+	fewshotBanks *fewshot.Banks
 }
 
 // chunkPackKey is the per-chunk key used to look up its ContextPack from

@@ -116,6 +116,9 @@ func stageSecretsPrefilter(_ context.Context, e *Engine, s *runState) error {
 
 func stageOrchestrator(ctx context.Context, e *Engine, s *runState) error {
 	s.skillByName = e.loadSkills()
+	if e.Cfg.Precision.FewShotEnabled {
+		s.scanCtx.fewshotBanks = e.loadFewShotBanks()
+	}
 	e.prog().Stage("orchestrator", 0)
 	plan, perr := e.planStep(ctx, s.target, s.files, s.graph)
 	e.prog().Done("orchestrator")
