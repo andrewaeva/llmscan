@@ -145,8 +145,11 @@ func TestOpenAIReasoningModelOmitsTemperatureAndUsesMaxCompletionTokens(t *testi
 			if _, present := raw["max_tokens"]; present {
 				t.Errorf("max_tokens must be omitted for reasoning model %s", model)
 			}
-			if gotReq.MaxCompletionTokens != 1234 {
-				t.Errorf("max_completion_tokens=%d want 1234", gotReq.MaxCompletionTokens)
+			// Reasoning models bump the budget x4 (and floor 8000) to leave room
+			// for hidden reasoning tokens — see openai.go.
+			wantMin := 8000
+			if gotReq.MaxCompletionTokens < wantMin {
+				t.Errorf("max_completion_tokens=%d want >= %d for reasoning model %s", gotReq.MaxCompletionTokens, wantMin, model)
 			}
 		})
 	}

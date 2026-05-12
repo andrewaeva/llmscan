@@ -106,7 +106,8 @@ func modelUsesMaxCompletionTokens(model string) bool {
 }
 type oaResponse struct {
 	Choices []struct {
-		Message oaMessage `json:"message"`
+		Message      oaMessage `json:"message"`
+		FinishReason string    `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -131,7 +132,18 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 	}
 	reasoning := modelUsesMaxCompletionTokens(c.spec.Model)
 	if reasoning {
-		body.MaxCompletionTokens = c.spec.MaxTokens
+		// Reasoning models (GPT-5/o1/o3/o4) consume a significant portion of
+		// their token budget on hidden reasoning tokens before emitting any
+		// content. A budget of <8000 frequently yields empty responses.
+		// Bump the effective ceiling so the visible content has room to land.
+		budget := c.spec.MaxTokens
+		if budget < 16000 {
+			budget *= 4
+		}
+		if budget < 8000 {
+			budget = 8000
+		}
+		body.MaxCompletionTokens = budget
 	} else {
 		body.MaxTokens = c.spec.MaxTokens
 	}
@@ -184,6 +196,10 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 	}
 	if len(out.Choices) == 0 {
 		return Response{}, errors.New(c.label + ": empty choices")
+	}
+	if out.Choices[0].Message.Content == "" && out.Choices[0].FinishReason == "length" {
+		return Response{}, fmt.Errorf("%s: empty content (finish_reason=length); model spent all %d tokens on reasoning, increase agent max_tokens in config",
+			c.label, out.Usage.CompletionTokens)
 	}
 	provider := c.label
 	if provider == "" {
