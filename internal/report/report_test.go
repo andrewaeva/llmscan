@@ -380,12 +380,16 @@ func TestSevBadgeUnknown(t *testing.T) {
 	}
 }
 
-func TestOneLineTruncates(t *testing.T) {
-	long := strings.Repeat("ab cd ", 80)
-	if got := oneLine(long); len(got) > 200 && !strings.HasSuffix(got, "...") {
-		t.Errorf("expected trailing ellipsis on truncation; got %q", got[len(got)-5:])
+func TestOneLineFullNeverTruncates(t *testing.T) {
+	long := strings.Repeat("ab cd ", 200)
+	got := oneLineFull(long)
+	if strings.HasSuffix(got, "...") {
+		t.Errorf("oneLineFull must not truncate; got trailing ellipsis: %q", got[len(got)-5:])
 	}
-	if got := oneLine("a\nb\n  c"); got != "a b c" {
+	if len(got) < len(strings.TrimSpace(long)) {
+		t.Errorf("oneLineFull dropped content: len(in)=%d len(out)=%d", len(long), len(got))
+	}
+	if got := oneLineFull("a\nb\n  c"); got != "a b c" {
 		t.Errorf("newline collapse: %q", got)
 	}
 }

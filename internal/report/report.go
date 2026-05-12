@@ -117,7 +117,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		case "false_positive", "fp":
 			vc = p.green(verdict)
 		}
-		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLineLimit(f.VerifierComment, 800), vc)
+		fmt.Fprintf(w, "%s %s (%s)\n", label("verifier:"), oneLineFull(f.VerifierComment), vc)
 	}
 	if f.DeepVerified {
 		vc := p.gray(f.DeepVerdict)
@@ -129,7 +129,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		case "inconclusive":
 			vc = p.yellow(f.DeepVerdict)
 		}
-		dc := oneLineLimit(f.DeepComment, 800)
+		dc := oneLineFull(f.DeepComment)
 		fmt.Fprintf(w, "%s %s (%s, %d tool calls)\n", label("deep:"), dc, vc, len(f.DeepTrace))
 	}
 	if f.Gates != nil && f.Gates.AnyEvaluated() {
@@ -139,7 +139,7 @@ func writeFinding(w io.Writer, p palette, idx int, f types.Finding) {
 		fmt.Fprintf(w, "%s %s\n", label("note:"), p.yellow("defense-in-depth — bug is real but lacks security impact"))
 	}
 	if f.SuggestedFix != "" {
-		fmt.Fprintf(w, "%s %s\n", label("fix:"), p.green(oneLine(f.SuggestedFix)))
+		fmt.Fprintf(w, "%s %s\n", label("fix:"), p.green(oneLineFull(f.SuggestedFix)))
 	}
 	if f.CodeSample != "" {
 		fmt.Fprintf(w, "%s\n", label("sample:"))
@@ -181,14 +181,14 @@ func writeGates(w io.Writer, p palette, label func(string) string, g *types.Gate
 		status := gateLabel(p, r.gate)
 		line := fmt.Sprintf("    %-13s %s", r.name+":", status)
 		if r.why != "" {
-			line += " " + p.dim("—") + " " + oneLine(r.why)
+			line += " " + p.dim("—") + " " + oneLineFull(r.why)
 		}
 		fmt.Fprintln(w, line)
 	}
 	if len(g.DevilsAdvocate) > 0 {
 		fmt.Fprintf(w, "    %s\n", p.dim("devil's advocate:"))
 		for _, item := range g.DevilsAdvocate {
-			fmt.Fprintf(w, "      %s %s\n", p.dim("·"), oneLine(item))
+			fmt.Fprintf(w, "      %s %s\n", p.dim("·"), oneLineFull(item))
 		}
 	}
 }
@@ -205,24 +205,10 @@ func gateLabel(p palette, g types.Gate) string {
 	return p.dim("?")
 }
 
-func oneLine(s string) string {
-	return oneLineLimit(s, 240)
-}
-
-func oneLineLimit(s string, max int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.Join(strings.Fields(s), " ")
-	if max > 0 && len(s) > max {
-		s = s[:max] + "..."
-	}
-	return s
-}
-
-// oneLineFull collapses whitespace but never truncates. Used for the `why`
-// field — the most informative line in a finding, where cutting at 240 chars
-// hides exactly the context reviewers need.
+// oneLineFull collapses whitespace into a single line without truncation.
 func oneLineFull(s string) string {
-	return oneLineLimit(s, 0)
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // ---------- SARIF ----------
