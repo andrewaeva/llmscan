@@ -47,6 +47,15 @@ service-account blobs, encryption keys, JWT signing secrets.
 - Keys with all-zero entropy or all-same-char.
 - Values referenced via env: `os.getenv("X")`, `process.env.X`, `System.getenv("X")` — these are config reads, not secrets.
 - Public keys: `-----BEGIN PUBLIC KEY-----`, `ssh-rsa AAAA...` in `authorized_keys`.
+- **Secret-manager references (pointers, NOT secrets)** — these are resolved at runtime by the platform and are safe to commit. NEVER flag:
+  - Yandex Vault / Lockbox IDs: `sec-[a-z0-9]{20,}` (e.g. `sec-01gk9h068sw52v0607q0hzn9cb`), `e10-...`, `ycp.secret....`.
+  - Yandex CI `a.yaml` blocks: `secret_environment_variables: [{ key: X, secret_spec: { uuid: sec-..., key: ... } }]`; the `secret:` field with a `sec-…` UUID value; `<<: *anchor` YAML merge keys.
+  - AWS Secrets Manager / SSM / KMS ARNs: `arn:aws:secretsmanager:...`, `arn:aws:ssm:...:parameter/...`, `arn:aws:kms:...:key/...`.
+  - GCP Secret Manager resource paths: `projects/<proj>/secrets/<name>[/versions/<v>]`.
+  - Azure Key Vault URLs: `https://<vault>.vault.azure.net/secrets/<name>`.
+  - HashiCorp Vault paths: `/secret/data/...`, `vault:...`.
+  - Kubernetes `secretKeyRef` / `valueFrom.secretKeyRef.name` references.
+  Flag only when the *resolved value* (real bearer token, private key, password) is literally committed.
 
 # Confidence calibration
 - **high**: matches a vendor-specific prefix regex AND has plausible Shannon entropy (>3.5 bits/char) AND is in production-reachable code.

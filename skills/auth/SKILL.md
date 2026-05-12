@@ -47,6 +47,16 @@ In scope:
 - Pure read of public data (e.g. a blog post by slug).
 - Static/CRUD code that is clearly not a route (no decorator, no framework binding visible).
 - JWT verification using a library default that *does* enforce alg/secret correctly (`jwt.verify(token, secret)` in PyJWT enforces alg list configured at decode).
+- **CI / build configuration files are OUT OF SCOPE for the auth agent.** Do NOT emit rule IDs like `ci-secret-in-pr-*`, `hardcoded-ci-secret`, or any other secrets/CI-pipeline finding from this agent — those belong to the `secrets` and `iac-ghactions` scanners. Stick to authentication and authorization issues on application code.
+- **Secret-manager references are NOT hardcoded secrets** and must not be flagged here. Examples that are safe pointers (resolved at runtime by the platform):
+  - Yandex Vault / Lockbox IDs: `sec-01gk9h068sw52v0607q0hzn9cb`, `e10-...`, `ycp.secret....`.
+  - Yandex CI `a.yaml` fields: `secret_environment_variables: [{ key: X, secret_spec: { uuid: sec-..., key: ... } }]`, the `secret:` attribute holding a `sec-…` UUID.
+  - AWS Secrets Manager / SSM Parameter Store / KMS ARNs (`arn:aws:secretsmanager:...`, `arn:aws:ssm:...`).
+  - GCP Secret Manager paths (`projects/<proj>/secrets/<name>[/versions/<v>]`).
+  - Azure Key Vault URLs (`https://<vault>.vault.azure.net/secrets/<name>`).
+  - HashiCorp Vault paths (`/secret/data/...`, `vault:...`).
+  - YAML merge anchors (`<<: *anchor-name`) — these reference an in-file map, never a value.
+  These are pointers, not credentials. Flag only when the *resolved value* (raw bearer token, private key, password) is committed.
 
 # Confidence calibration
 - **high**: privileged-looking handler (`/admin`, `/users/:id/delete`, `/api/payments`) with NO visible auth check and no surrounding middleware in the chunk; OR JWT `alg: none` / `verify=False`.

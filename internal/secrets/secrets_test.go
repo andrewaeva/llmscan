@@ -128,6 +128,59 @@ func TestHighEntropyAmbiguous(t *testing.T) {
 	}
 }
 
+func TestIsVaultReference(t *testing.T) {
+	vaultRefs := []string{
+		"sec-01gk9h068sw52v0607q0hzn9cb",
+		"sec-abcdefghijklmnopqrstu",
+		"e10-AbCdEfGhIjKlMnOpQrSt",
+		"arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf",
+		"arn:aws:ssm:us-east-1:123456789012:parameter/prod/api/key",
+		"projects/my-proj/secrets/db-password",
+		"projects/my-proj/secrets/db-password/versions/latest",
+		"https://my-vault.vault.azure.net/secrets/db-pw",
+		"/secret/data/prod/api",
+		"vault:prod/db/password",
+		`"sec-01gk9h068sw52v0607q0hzn9cb"`, // quoted form
+	}
+	for _, r := range vaultRefs {
+		if !IsVaultReference(r) {
+			t.Errorf("expected vault reference: %q", r)
+		}
+	}
+	notRefs := []string{
+		"AKIAJWQXYZ1234567ABC",
+		"ghp_" + strings.Repeat("A", 36),
+		"sk-1234567890abcdef",
+		"sec-short", // too short
+		"random-string-value",
+	}
+	for _, r := range notRefs {
+		if IsVaultReference(r) {
+			t.Errorf("must not be vault reference: %q", r)
+		}
+	}
+}
+
+func TestScanTextSkipsVaultReferences(t *testing.T) {
+	// Yandex CI a.yaml-style: secret_spec.uuid is a *reference*, not the secret.
+	src := `secret_environment_variables:
+  - key: YA_TOKEN
+    secret_spec:
+      uuid: sec-01gk9h068sw52v0607q0hzn9cb
+      key: ya_token
+# also: secret: sec-01gk9h068sw52v0607q0hzn9cb  # vault ref
+`
+	got := ScanText("a.yaml", src)
+	for _, m := range got {
+		t.Errorf("vault reference leaked through filter: %+v", m)
+	}
+	// And high-entropy heuristic must not catch it either.
+	quoted := `token: "sec-01gk9h068sw52v0607q0hzn9cb"`
+	if g := HighEntropyAmbiguous(quoted, 4.0, 20); len(g) != 0 {
+		t.Errorf("high-entropy filter leaked vault ref: %+v", g)
+	}
+}
+
 func BenchmarkScanTextSmall(b *testing.B) {
 	src := strings.Repeat("var x = \"AKIAJWQXYZ1234567ABC\"\n", 20)
 	b.ResetTimer()

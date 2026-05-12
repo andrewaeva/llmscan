@@ -89,6 +89,9 @@ func ScanText(path, content string) []Match {
 			if isLikelyPlaceholder(token) {
 				continue
 			}
+			if IsVaultReference(token) {
+				continue
+			}
 			line, col := offsetToLineCol(content, idx[0])
 			out = append(out, Match{
 				RuleID:   r.ID,
@@ -125,6 +128,9 @@ func HighEntropyAmbiguous(content string, minEntropy float64, minLen int) []Matc
 			continue
 		}
 		if isLikelyPlaceholder(token) {
+			continue
+		}
+		if IsVaultReference(token) {
 			continue
 		}
 		line, col := offsetToLineCol(content, m[2])
@@ -168,6 +174,37 @@ func isLikelyPlaceholder(s string) bool {
 	low := strings.ToLower(s)
 	for _, p := range []string{"example", "placeholder", "your-", "xxx", "todo", "changeme", "dummy", "sample"} {
 		if strings.Contains(low, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// vaultRefPatterns is the curated allowlist of secret-manager *references*
+// (pointers/IDs resolved at runtime), which are safe to commit and must not
+// be flagged as hardcoded secrets.
+var vaultRefPatterns = []*regexp.Regexp{
+	// Yandex Vault / Yandex Cloud Lockbox secret IDs.
+	regexp.MustCompile(`^sec-[a-z0-9]{20,}$`),                  // Yandex Vault, e.g. sec-01gk9h068sw52v0607q0hzn9cb
+	regexp.MustCompile(`^e10-[A-Za-z0-9_\-]{20,}$`),            // Yandex Lockbox secret id
+	regexp.MustCompile(`^ycp\.secret\.[A-Za-z0-9_\-.]+$`),      // Yandex Cloud secret resource path
+	regexp.MustCompile(`^arn:aws:secretsmanager:[A-Za-z0-9:_\-/.]+$`),
+	regexp.MustCompile(`^arn:aws:ssm:[A-Za-z0-9:_\-/.]+:parameter/.+$`),
+	regexp.MustCompile(`^arn:aws:kms:[A-Za-z0-9:_\-/.]+:key/.+$`),
+	regexp.MustCompile(`^projects/[^/\s]+/secrets/[^/\s]+(/versions/[^/\s]+)?$`), // GCP Secret Manager
+	regexp.MustCompile(`^https://[a-zA-Z0-9_\-]+\.vault\.azure\.net/secrets/.+$`),
+	regexp.MustCompile(`^/secret/data/.+$`),                    // HashiCorp Vault KV v2 path
+	regexp.MustCompile(`^vault:.+$`),                           // generic vault: URI
+}
+
+// IsVaultReference reports whether s looks like a *reference* to a secret
+// stored in an external secret manager (Yandex Vault/Lockbox, AWS Secrets
+// Manager, GCP Secret Manager, Azure Key Vault, HashiCorp Vault). Such
+// references are safe to commit and must not be flagged as hardcoded secrets.
+func IsVaultReference(s string) bool {
+	trim := strings.Trim(s, "\"' \t\n\r")
+	for _, re := range vaultRefPatterns {
+		if re.MatchString(trim) {
 			return true
 		}
 	}
