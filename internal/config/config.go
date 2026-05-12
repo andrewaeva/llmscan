@@ -17,6 +17,11 @@ type ModelSpec struct {
 	MaxTokens   int     `yaml:"max_tokens,omitempty"`  // default 4096
 	BaseURL     string  `yaml:"base_url,omitempty"`    // optional override (OpenAI-compatible endpoints)
 	APIKeyEnv   string  `yaml:"api_key_env,omitempty"` // env var to read the API key from
+	// ContextWindow is the total input-token capacity of the model. When
+	// non-zero, the ContextPack auto-budget caps at 0.7 × ContextWindow to
+	// leave room for the system prompt and output. Examples: Claude Opus
+	// 4.7 = 200000, GPT-5.4 = 272000, Gemini 2.5 Pro = 1000000.
+	ContextWindow int `yaml:"context_window,omitempty"`
 }
 
 // AgentConfig binds an agent role to a model and a few knobs.
@@ -41,6 +46,55 @@ type ScanConfig struct {
 	ScopeRoots []string `yaml:"scope_roots,omitempty"` // restrict traversal to these sub-paths
 	MaxFiles   int      `yaml:"max_files,omitempty"`   // abort with error above this count; 0 = unlimited
 	VCS        string   `yaml:"vcs,omitempty"`         // auto | git | arc | none
+
+	// Chunk and Context are the new token-aware knobs. They co-exist with the
+	// legacy ChunkLines/ChunkOverlap fields for back-compat; when Chunk.Enabled
+	// is true the pipeline uses the adaptive (symbol+token) chunker and the
+	// ContextPack builder instead of the line-window chunker.
+	Chunk   ChunkConfig   `yaml:"chunk,omitempty"`
+	Context ContextConfig `yaml:"context,omitempty"`
+}
+
+// ChunkConfig controls the adaptive (token-aware, symbol-grouped) chunker.
+//
+// When Enabled, the pipeline groups consecutive top-level symbols up to
+// TargetTokens, hard-caps at MaxTokens, and avoids emitting tail chunks
+// smaller than MinTokens. Tuned defaults match 200K-context modern models:
+// target = 8000 tokens ≈ 700–1000 LOC of Go.
+type ChunkConfig struct {
+	Enabled       bool `yaml:"enabled,omitempty"`
+	TargetTokens  int  `yaml:"target_tokens,omitempty"`
+	MaxTokens     int  `yaml:"max_tokens,omitempty"`
+	MinTokens     int  `yaml:"min_tokens,omitempty"`
+	FallbackLines int  `yaml:"fallback_lines,omitempty"`
+}
+
+// ContextConfig wires the contextpack builder.
+//
+// Level is one of "minimal", "balanced", "aggressive", "extreme" (or empty
+// for "balanced"). BudgetTokens overrides the level default; 0 = derive from
+// ModelSpec.ContextWindow (cap at 0.7 × window).
+type ContextConfig struct {
+	Enabled           bool    `yaml:"enabled,omitempty"`
+	Level             string  `yaml:"level,omitempty"`
+	BudgetTokens      int     `yaml:"budget_tokens,omitempty"`
+	CalleesHops       int     `yaml:"callees_hops,omitempty"`
+	CalleesMax        int     `yaml:"callees_max,omitempty"`
+	CallersHops       int     `yaml:"callers_hops,omitempty"`
+	CallersMax        int     `yaml:"callers_max,omitempty"`
+	IncludeTypes      *bool   `yaml:"include_types,omitempty"`
+	TypesMax          int     `yaml:"types_max,omitempty"`
+	IncludeSanitizers *bool   `yaml:"include_sanitizers,omitempty"`
+	SanitizersMax     int     `yaml:"sanitizers_max,omitempty"`
+	IncludeSiblings   *bool   `yaml:"include_siblings,omitempty"`
+	SiblingsMax       int     `yaml:"siblings_max,omitempty"`
+	RAGTopK           int     `yaml:"rag_top_k,omitempty"`
+	IncludeConsts     *bool   `yaml:"include_consts,omitempty"`
+	ConstsMax         int     `yaml:"consts_max,omitempty"`
+	SqueezeHeadLines  int     `yaml:"squeeze_head_lines,omitempty"`
+	SqueezeTailLines  int     `yaml:"squeeze_tail_lines,omitempty"`
+	OverflowRatio     float64 `yaml:"overflow_ratio,omitempty"`
+	Cache             bool    `yaml:"cache,omitempty"`
 }
 
 // RAGConfig controls the in-memory retrieval index.
@@ -258,6 +312,18 @@ func Default() Config {
 				".venv/", "venv/", "__pycache__/", ".idea/", ".vscode/",
 				"*.min.js", "*.lock", "*.sum", "go.sum",
 			},
+			Chunk: ChunkConfig{
+				Enabled:       false,
+				TargetTokens:  8000,
+				MaxTokens:     16000,
+				MinTokens:     500,
+				FallbackLines: 400,
+			},
+			Context: ContextConfig{
+				Enabled: false,
+				Level:   "balanced",
+				Cache:   true,
+			},
 		},
 	}
 }
@@ -314,7 +380,63 @@ func (c Config) Validate() error {
 	if c.Deep.MaxHotspots < 0 || c.Deep.Budget < 0 || c.Deep.Concurrency < 0 {
 		return fmt.Errorf("deep.* counters must be >= 0")
 	}
+	if cc := c.Scan.Chunk; cc.Enabled {
+		if cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens {
+			return fmt.Errorf("scan.chunk.max_tokens=%d must be >= target_tokens=%d",
+				cc.MaxTokens, cc.TargetTokens)
+		}
+		if cc.MinTokens < 0 || cc.TargetTokens < 0 || cc.MaxTokens < 0 {
+			return fmt.Errorf("scan.chunk.* token counters must be >= 0")
+		}
+	}
+	if cc := c.Scan.Context; cc.Enabled {
+		if cc.OverflowRatio < 0 || cc.OverflowRatio > 1 {
+			return fmt.Errorf("scan.context.overflow_ratio=%v must be in [0,1]", cc.OverflowRatio)
+		}
+		if cc.BudgetTokens < 0 {
+			return fmt.Errorf("scan.context.budget_tokens=%d must be >= 0", cc.BudgetTokens)
+		}
+		if cc.CalleesHops < 0 || cc.CallersHops < 0 {
+			return fmt.Errorf("scan.context.*_hops must be >= 0")
+		}
+		switch strings.ToLower(cc.Level) {
+		case "", "minimal", "balanced", "aggressive", "extreme":
+		default:
+			return fmt.Errorf("scan.context.level=%q must be one of minimal|balanced|aggressive|extreme", cc.Level)
+		}
+	}
 	return nil
+}
+
+// AutoContextBudget resolves the effective contextpack budget for the given
+// agent. Precedence:
+//
+//	1. scan.context.budget_tokens if non-zero, capped at 0.7 × ContextWindow.
+//	2. 0.7 × model.context_window if window is set.
+//	3. Level default (40K minimal, 80K balanced/aggressive, 120K extreme).
+func (c Config) AutoContextBudget(agent string) int {
+	model := c.ResolveModel(agent)
+	cap0 := 0
+	if model.ContextWindow > 0 {
+		cap0 = int(float64(model.ContextWindow) * 0.7)
+	}
+	if b := c.Scan.Context.BudgetTokens; b > 0 {
+		if cap0 > 0 && b > cap0 {
+			return cap0
+		}
+		return b
+	}
+	if cap0 > 0 {
+		return cap0
+	}
+	switch strings.ToLower(c.Scan.Context.Level) {
+	case "minimal":
+		return 40000
+	case "extreme":
+		return 120000
+	default: // balanced, aggressive, or empty
+		return 80000
+	}
 }
 
 // ResolveModel returns the model spec for an agent, falling back to DefaultModel and filling in env-derived API key info.

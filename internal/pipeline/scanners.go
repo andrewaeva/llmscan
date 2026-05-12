@@ -42,6 +42,30 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 			defer func() { <-sem }()
 
 			extra := ""
+
+			// Preferred path: ContextPack assembled by stageBuildContextPacks.
+			// When present, it supersedes the legacy extra-context sources because
+			// it already deduplicates callees, callers, types, sanitizers, and RAG
+			// neighbours inside a hard token budget.
+			if sc.packsByChunkKey != nil {
+				if p, ok := sc.packsByChunkKey[chunkPackKey(c)]; ok && p != nil {
+					extra = p.Render()
+					fnds := e.scanOneChunk(ctx, scanner, c, extra)
+					if fnds != nil {
+						mu.Lock()
+						out = append(out, fnds...)
+						mu.Unlock()
+					}
+					n := atomic.AddInt64(&done, 1)
+					e.prog().Inc("scanners", 1)
+					if e.Verbose && total >= 20 && (n%25 == 0 || n == int64(total)) {
+						e.logf("scan:%s progress %d/%d (%.0fs)", name, n, total, time.Since(start).Seconds())
+					}
+					return
+				}
+			}
+
+			// Legacy fallback: symbol-expansion / taint traces / RAG.
 			// Symbol-expansion: append referenced definitions for high precision.
 			if sc.expander != nil {
 				defs := sc.expander.Expand(c.Content, c.Path, sc.deps, symexpand.Options{
@@ -94,7 +118,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 					} else if len(filtered) > e.Cfg.RAG.FilterKeep {
 						filtered = filtered[:e.Cfg.RAG.FilterKeep]
 					}
-					extra = agents.FormatChunksAsContext(filtered)
+					extra += agents.FormatChunksAsContext(filtered)
 				}
 			}
 
@@ -169,6 +193,34 @@ func (e *Engine) verifyAll(ctx context.Context, v *agents.Verifier, findings []t
 	}
 	wg.Wait()
 	return out
+}
+
+// scanOneChunk runs one scan request (with optional self-consistency voting)
+// and returns the resulting findings. Logs and swallows errors; nil result
+// means "nothing to add".
+func (e *Engine) scanOneChunk(ctx context.Context, scanner *agents.Scanner, c types.FileTarget, extra string) []types.Finding {
+	if e.Cfg.Precision.VoteN > 1 {
+		runs := make([][]types.Finding, 0, e.Cfg.Precision.VoteN)
+		for i := 0; i < e.Cfg.Precision.VoteN; i++ {
+			r, rerr := scanner.Scan(ctx, c, extra)
+			if rerr != nil {
+				e.logf("scan:%s vote%d on %s: %v", scanner.Name, i, c.Path, rerr)
+				continue
+			}
+			runs = append(runs, r)
+		}
+		k := e.Cfg.Precision.VoteK
+		if k <= 0 {
+			k = (e.Cfg.Precision.VoteN / 2) + 1
+		}
+		return voting.Aggregate(runs, k)
+	}
+	fnds, err := scanner.Scan(ctx, c, extra)
+	if err != nil {
+		e.logf("scan:%s on %s: %v", scanner.Name, c.Path, err)
+		return nil
+	}
+	return fnds
 }
 
 // snippetWithLines returns content lines [start-pad, end+pad] formatted with line numbers.

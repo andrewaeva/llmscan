@@ -13,6 +13,9 @@ import (
 	"github.com/andrewaeva/llmscan/internal/baseline"
 	"github.com/andrewaeva/llmscan/internal/cache"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
+	"github.com/andrewaeva/llmscan/internal/chunker"
+	"github.com/andrewaeva/llmscan/internal/config"
+	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
 	"github.com/andrewaeva/llmscan/internal/entrypoints"
 	"github.com/andrewaeva/llmscan/internal/reach"
@@ -52,6 +55,9 @@ func (e *Engine) stages() []stage {
 			run:  stageRAG},
 		{name: "cache", run: stageOpenCache},
 		{name: "chunk", run: stageChunk},
+		{name: "context-pack",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Scan.Context.Enabled },
+			run:  stageBuildContextPacks},
 		{name: "dag-build", run: stageBuildDAG},
 		{name: "scanners", run: stageRunDAG},
 		{name: "post-process", run: stagePostProcess},
@@ -240,25 +246,269 @@ func stageOpenCache(_ context.Context, e *Engine, s *runState) error {
 func stageChunk(_ context.Context, e *Engine, s *runState) error {
 	s.prioritized = applyPlan(s.files, s.plan)
 	var chunks []types.FileTarget
-	for _, f := range s.prioritized {
-		chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
+	if e.Cfg.Scan.Chunk.Enabled {
+		opts := chunker.AdaptiveOptions{
+			TargetTokens:  e.Cfg.Scan.Chunk.TargetTokens,
+			MaxTokens:     e.Cfg.Scan.Chunk.MaxTokens,
+			MinTokens:     e.Cfg.Scan.Chunk.MinTokens,
+			FallbackLines: e.Cfg.Scan.Chunk.FallbackLines,
+		}
+		for _, f := range s.prioritized {
+			fa := s.astByPath[f.Path]
+			if fa == nil {
+				// Fallback to legacy chunker when AST is missing (binary, parse fail).
+				chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
+				continue
+			}
+			adaptive := chunker.ChunkAdaptive(fa, opts)
+			if len(adaptive) == 0 {
+				chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
+				continue
+			}
+			chunks = append(chunks, adaptive...)
+		}
+		e.logf("chunker: adaptive (target=%d max=%d min=%d) → %d chunks across %d files",
+			opts.TargetTokens, opts.MaxTokens, opts.MinTokens, len(chunks), len(s.prioritized))
+	} else {
+		for _, f := range s.prioritized {
+			chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
+		}
+		e.logf("scanning %d chunks across %d files", len(chunks), len(s.prioritized))
 	}
 	s.chunks = chunks
-	e.logf("scanning %d chunks across %d files", len(chunks), len(s.prioritized))
 	return nil
+}
+
+// stageBuildContextPacks assembles a contextpack.Pack for each chunk and
+// implements the overflow feedback loop: when a chunk's pack signals
+// Overflow=true (chunk_tokens > budget * OverflowRatio), the chunk is split
+// in half and packs are rebuilt for each half. The loop is bounded to avoid
+// pathological re-splitting (max 4 rounds).
+func stageBuildContextPacks(ctx context.Context, e *Engine, s *runState) error {
+	cfg := buildContextpackConfig(e.Cfg)
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("context-pack: invalid config: %w", err)
+	}
+	builder := contextpack.New(cfg, s.astByPath, s.cg, s.graph)
+	if s.index != nil && cfg.RAGTopK > 0 {
+		builder.RAG = s.index
+	}
+	s.cpBuilder = builder
+
+	e.prog().Stage("context-pack", len(s.chunks))
+
+	const maxRounds = 4
+	cacheDB := s.cacheDB
+	cacheEnabled := e.Cfg.Scan.Context.Cache && cacheDB != nil
+
+	type work struct {
+		chunks []types.FileTarget // queue
+	}
+	q := work{chunks: append([]types.FileTarget(nil), s.chunks...)}
+
+	outChunks := make([]types.FileTarget, 0, len(q.chunks))
+	outPacks := make(map[string]*contextpack.Pack, len(q.chunks))
+
+	var (
+		totalFragments  int
+		totalTokensSent int
+		tokenSamples    []int
+		overflowCount   int
+		rechunks        int
+		cacheHits       int
+		totalSqueezed   int
+		totalDropped    int
+	)
+
+	for round := 0; round < maxRounds && len(q.chunks) > 0; round++ {
+		next := q.chunks[:0]
+		for _, c := range q.chunks {
+			var pack contextpack.Pack
+			hit := false
+			key := chunkPackKey(c)
+			if cacheEnabled {
+				if payload, ok := cacheDB.GetContextPack(builder.CacheKeyFor(c)); ok {
+					if p, err := contextpack.DecodePack(payload); err == nil {
+						pack = p
+						hit = true
+						cacheHits++
+					}
+				}
+			}
+			if !hit {
+				pack = builder.Build(ctx, c)
+				if cacheEnabled && !pack.Overflow {
+					if payload, err := contextpack.EncodePack(pack); err == nil {
+						_ = cacheDB.PutContextPack(builder.CacheKeyFor(c), payload)
+					}
+				}
+			}
+
+			if pack.Overflow && round+1 < maxRounds && c.Lines > 4 {
+				// Split chunk and re-queue for next round.
+				overflowCount++
+				rechunks++
+				left, right := chunker.SplitInHalf(c)
+				next = append(next, left, right)
+				e.logf("context-pack: overflow on %s:%d-%d (%s) → split",
+					c.Path, c.LineOffset+1, c.LineOffset+c.Lines, pack.OverflowReason)
+				continue
+			}
+			if pack.Overflow {
+				overflowCount++
+				e.logf("context-pack: overflow on %s:%d-%d (kept, max splits reached)",
+					c.Path, c.LineOffset+1, c.LineOffset+c.Lines)
+			}
+			outChunks = append(outChunks, c)
+			p := pack
+			outPacks[key] = &p
+			totalFragments += len(pack.Fragments)
+			totalTokensSent += pack.UsedTokens
+			tokenSamples = append(tokenSamples, pack.UsedTokens)
+			totalSqueezed += pack.Squeezed
+			totalDropped += pack.Dropped
+			e.prog().Inc("context-pack", 1)
+		}
+		q.chunks = next
+	}
+
+	// Anything left in the queue after maxRounds: emit as-is, packs assembled
+	// with overflow flag preserved so the operator sees in logs/stats.
+	for _, c := range q.chunks {
+		pack := builder.Build(ctx, c)
+		outChunks = append(outChunks, c)
+		k := chunkPackKey(c)
+		p := pack
+		outPacks[k] = &p
+		totalFragments += len(pack.Fragments)
+		totalTokensSent += pack.UsedTokens
+		tokenSamples = append(tokenSamples, pack.UsedTokens)
+		totalSqueezed += pack.Squeezed
+		totalDropped += pack.Dropped
+	}
+
+	s.chunks = outChunks
+	s.cpStats = types.ContextPackStats{
+		Packs:            len(outChunks),
+		SqueezedChunks:   totalSqueezed,
+		DroppedFragments: totalDropped,
+		Rechunks:         rechunks,
+		CacheHits:        cacheHits,
+	}
+	if n := len(outChunks); n > 0 {
+		s.cpStats.AvgFragments = float64(totalFragments) / float64(n)
+		s.cpStats.AvgTokensSent = float64(totalTokensSent) / float64(n)
+		s.cpStats.OverflowRate = float64(overflowCount) / float64(n+overflowCount)
+		s.cpStats.P95TokensSent = percentileInt(tokenSamples, 95)
+	}
+	s.report.Stats.ContextPack = &s.cpStats
+
+	// Stash on scanContext (will be set during dag-build).
+	s.scanCtx.packsByChunkKey = outPacks
+
+	e.prog().Done("context-pack")
+	e.logf("context-pack: %d packs, avg frags=%.1f avg tokens=%.0f overflow=%d rechunks=%d cache_hits=%d",
+		len(outChunks), s.cpStats.AvgFragments, s.cpStats.AvgTokensSent,
+		overflowCount, rechunks, cacheHits)
+	return nil
+}
+
+func buildContextpackConfig(c config.Config) contextpack.Config {
+	var base contextpack.Config
+	switch strings.ToLower(c.Scan.Context.Level) {
+	case "minimal":
+		base = contextpack.MinimalConfig()
+	case "aggressive":
+		base = contextpack.AggressiveConfig()
+	case "extreme":
+		base = contextpack.ExtremeConfig()
+	default:
+		base = contextpack.DefaultConfig()
+	}
+	if b := c.AutoContextBudget(""); b > 0 {
+		base.BudgetTokens = b
+	}
+	cc := c.Scan.Context
+	if cc.CalleesHops > 0 {
+		base.CalleesHops = cc.CalleesHops
+	}
+	if cc.CalleesMax > 0 {
+		base.CalleesMax = cc.CalleesMax
+	}
+	if cc.CallersHops > 0 {
+		base.CallersHops = cc.CallersHops
+	}
+	if cc.CallersMax > 0 {
+		base.CallersMax = cc.CallersMax
+	}
+	if cc.IncludeTypes != nil {
+		base.IncludeTypes = *cc.IncludeTypes
+	}
+	if cc.TypesMax > 0 {
+		base.TypesMax = cc.TypesMax
+	}
+	if cc.IncludeSanitizers != nil {
+		base.IncludeSanitizers = *cc.IncludeSanitizers
+	}
+	if cc.SanitizersMax > 0 {
+		base.SanitizersMax = cc.SanitizersMax
+	}
+	if cc.IncludeSiblings != nil {
+		base.IncludeSiblings = *cc.IncludeSiblings
+	}
+	if cc.SiblingsMax > 0 {
+		base.SiblingsMax = cc.SiblingsMax
+	}
+	if cc.RAGTopK > 0 {
+		base.RAGTopK = cc.RAGTopK
+	}
+	if cc.IncludeConsts != nil {
+		base.IncludeConsts = *cc.IncludeConsts
+	}
+	if cc.ConstsMax > 0 {
+		base.ConstsMax = cc.ConstsMax
+	}
+	if cc.SqueezeHeadLines > 0 {
+		base.SqueezeHeadLines = cc.SqueezeHeadLines
+	}
+	if cc.SqueezeTailLines > 0 {
+		base.SqueezeTailLines = cc.SqueezeTailLines
+	}
+	if cc.OverflowRatio > 0 {
+		base.OverflowRatio = cc.OverflowRatio
+	}
+	return base
+}
+
+// percentileInt returns the (approximate) p-th percentile of xs (0<p<100).
+func percentileInt(xs []int, p int) int {
+	if len(xs) == 0 {
+		return 0
+	}
+	copyXs := append([]int(nil), xs...)
+	sort.Ints(copyXs)
+	idx := (p * (len(copyXs) - 1)) / 100
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(copyXs) {
+		idx = len(copyXs) - 1
+	}
+	return copyXs[idx]
 }
 
 func stageBuildDAG(_ context.Context, e *Engine, s *runState) error {
 	s.enabledScanners = e.enabledScanners(s.plan, s.skillByName, s.files)
 	sc := scanContext{
-		chunks:         s.chunks,
-		contentByPath:  map[string]string{},
-		index:          s.index,
-		expander:       s.expander,
-		taintTraces:    s.taintTraces,
-		interProcPaths: s.interProcPaths,
-		deps:           s.graph.AsFileMap(),
-		suppress:       s.suppressions,
+		chunks:          s.chunks,
+		contentByPath:   map[string]string{},
+		index:           s.index,
+		expander:        s.expander,
+		taintTraces:     s.taintTraces,
+		interProcPaths:  s.interProcPaths,
+		deps:            s.graph.AsFileMap(),
+		suppress:        s.suppressions,
+		packsByChunkKey: s.scanCtx.packsByChunkKey,
 	}
 	for _, f := range s.prioritized {
 		sc.contentByPath[f.Path] = f.Content

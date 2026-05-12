@@ -24,6 +24,12 @@ type Cache interface {
 	// Deep-tool result memoisation.
 	GetDeepTool(key string) ([]byte, bool)
 	PutDeepTool(key string, payload []byte) error
+
+	// ContextPack memoisation. Key should be the Pack.CacheKey computed by
+	// contextpack.Builder, which already hashes (chunk content, cfg). The
+	// payload is opaque JSON.
+	GetContextPack(key string) ([]byte, bool)
+	PutContextPack(key string, payload []byte) error
 }
 
 // Compile-time check: *DB must satisfy Cache.

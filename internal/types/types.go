@@ -196,12 +196,27 @@ type Report struct {
 
 // Stats keeps high-level numbers for the final report.
 type Stats struct {
-	Raw         int            `json:"raw_findings"`
-	AfterDedup  int            `json:"after_dedup"`
-	AfterVerify int            `json:"after_verify"`
-	FalsePos    int            `json:"false_positives"`
-	BySeverity  map[string]int `json:"by_severity"`
-	ByAgent     map[string]int `json:"by_agent"`
-	TokensIn    int            `json:"tokens_in,omitempty"`
-	TokensOut   int            `json:"tokens_out,omitempty"`
+	Raw         int               `json:"raw_findings"`
+	AfterDedup  int               `json:"after_dedup"`
+	AfterVerify int               `json:"after_verify"`
+	FalsePos    int               `json:"false_positives"`
+	BySeverity  map[string]int    `json:"by_severity"`
+	ByAgent     map[string]int    `json:"by_agent"`
+	TokensIn    int               `json:"tokens_in,omitempty"`
+	TokensOut   int               `json:"tokens_out,omitempty"`
+	ContextPack *ContextPackStats `json:"context_pack,omitempty"`
+}
+
+// ContextPackStats reports aggregate metrics about ContextPack assembly.
+// Populated by the pipeline when scan.context.enabled=true.
+type ContextPackStats struct {
+	Packs            int     `json:"packs"`
+	AvgFragments     float64 `json:"avg_fragments"`
+	AvgTokensSent    float64 `json:"avg_tokens_sent"`
+	P95TokensSent    int     `json:"p95_tokens_sent"`
+	OverflowRate     float64 `json:"overflow_rate"`
+	SqueezedChunks   int     `json:"squeezed_chunks"`
+	DroppedFragments int     `json:"dropped_fragments"`
+	Rechunks         int     `json:"rechunks"`
+	CacheHits        int     `json:"cache_hits,omitempty"`
 }

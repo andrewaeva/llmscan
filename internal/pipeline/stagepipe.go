@@ -7,6 +7,7 @@ import (
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/cache"
 	"github.com/andrewaeva/llmscan/internal/callgraph"
+	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/dag"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
 	"github.com/andrewaeva/llmscan/internal/entrypoints"
@@ -79,6 +80,11 @@ type runState struct {
 
 	// Final findings.
 	final []types.Finding
+
+	// ContextPack telemetry (populated by stageBuildContextPacks when
+	// scan.context.enabled = true).
+	cpStats   types.ContextPackStats
+	cpBuilder *contextpack.Builder
 }
 
 // stage is one named step in the pipeline. Stages are executed in order; the

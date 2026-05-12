@@ -88,6 +88,11 @@ func (d *DB) migrate() error {
 			payload     BLOB NOT NULL,
 			created_at  INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS context_packs (
+			key         TEXT PRIMARY KEY,
+			payload     BLOB NOT NULL,
+			created_at  INTEGER NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -192,4 +197,30 @@ func decodeFloats(b []byte) []float32 {
 		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
 	}
 	return out
+}
+
+
+// ---- Context pack cache ----
+
+// GetContextPack returns a cached pack payload if present.
+func (d *DB) GetContextPack(key string) ([]byte, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	row := d.conn.QueryRow(`SELECT payload FROM context_packs WHERE key=?`, key)
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		return nil, false
+	}
+	return payload, true
+}
+
+// PutContextPack stores a pack payload by key.
+func (d *DB) PutContextPack(key string, payload []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, err := d.conn.Exec(
+		`INSERT OR REPLACE INTO context_packs(key,payload,created_at) VALUES(?,?,?)`,
+		key, payload, time.Now().Unix(),
+	)
+	return err
 }

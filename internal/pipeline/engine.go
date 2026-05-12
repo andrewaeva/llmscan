@@ -14,10 +14,12 @@ package pipeline
 import (
 	"log"
 	"os"
+	"strconv"
 
 	myast "github.com/andrewaeva/llmscan/internal/ast"
 	"github.com/andrewaeva/llmscan/internal/calibration"
 	"github.com/andrewaeva/llmscan/internal/config"
+	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/progress"
 	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/suppress"
@@ -79,6 +81,17 @@ type scanContext struct {
 	interProcPaths []taint.TaintPath
 	deps           map[string][]string
 	suppress       []suppress.Suppression
+
+	// packsByChunkKey holds the assembled ContextPack for each chunk when
+	// scan.context.enabled is true. Key = chunkPackKey(chunk). Nil disables
+	// pack-based context (runScanner falls back to legacy extra-context paths).
+	packsByChunkKey map[string]*contextpack.Pack
+}
+
+// chunkPackKey is the per-chunk key used to look up its ContextPack from
+// scanContext.packsByChunkKey. Must match what stageBuildContextPacks writes.
+func chunkPackKey(c types.FileTarget) string {
+	return c.Path + "#" + strconv.Itoa(c.ChunkIdx) + "@" + strconv.Itoa(c.LineOffset)
 }
 
 func (e *Engine) logf(format string, args ...any) {
