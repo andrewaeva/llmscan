@@ -55,7 +55,7 @@ func fakeOpenAIServer(t *testing.T, counter *int64) *httptest.Server {
 			reply = `{"kept":["dummy"],"dropped":[]}`
 		case strings.Contains(system, "Context Filter"):
 			reply = `{"keep":[],"reason":"none"}`
-		case strings.Contains(system, "injection security agent") || strings.Contains(system, "secrets security agent"):
+		case strings.Contains(system, "injection security agent") || strings.Contains(system, "auth security agent"):
 			// Return one fake finding for each scanner so we exercise the verifier + fp_filter chain.
 			reply = `{"findings":[{"rule_id":"r-test","title":"fake issue","severity":"high","confidence":"medium","start_line":1,"end_line":1,"code_sample":"x"}]}`
 		default:
@@ -92,7 +92,6 @@ func configForServer(t *testing.T, srvURL string) config.Config {
 	cfg.Precision.Taint = false
 	cfg.Precision.Reachability = false
 	cfg.Precision.PreFilterWatchlist = false
-	cfg.Precision.SecretsPreFilter = false
 	cfg.Precision.VoteN = 0
 	cfg.Deep.Enabled = false
 	cfg.DropFalsePositives = true
@@ -105,7 +104,7 @@ func configForServer(t *testing.T, srvURL string) config.Config {
 		ac.Enabled = false
 		cfg.Agents[name] = ac
 	}
-	for _, name := range []string{"orchestrator", "injection", "secrets", "verifier", "fp_filter"} {
+	for _, name := range []string{"orchestrator", "injection", "auth", "verifier", "fp_filter"} {
 		cfg.Agents[name] = config.AgentConfig{Enabled: true}
 	}
 	return cfg
@@ -156,29 +155,6 @@ func TestEngineRunIntegration(t *testing.T) {
 	if rep.Stats.Raw == 0 {
 		t.Errorf("Raw stat=0: %+v", rep.Stats)
 	}
-}
-
-func TestEngineRunPreFiltersAndSuppressions(t *testing.T) {
-	var calls int64
-	srv := fakeOpenAIServer(t, &calls)
-	cfg := configForServer(t, srv.URL)
-	cfg.Precision.SecretsPreFilter = true
-	cfg.Precision.PreFilterWatchlist = false
-	target := t.TempDir()
-	mustWrite(t, filepath.Join(target, "secrets.py"),
-		"# llmscan:ignore[*] reason: test secret\n"+
-			"KEY = 'AKIAIOSFODNN7EXAMPLE'\nPASS = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'\n")
-	e := New(cfg)
-	rep, err := e.Run(context.Background(), target)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	// At least the secret pre-filter should have produced detections.
-	if rep.FilesScanned == 0 {
-		t.Error("no files scanned")
-	}
-	// Some findings (or none if suppressed) — we just exercise the code paths.
-	_ = rep
 }
 
 // confirm the goroutine-based scanner code is being exercised without race.

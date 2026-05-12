@@ -130,8 +130,6 @@ type PrecisionConfig struct {
 	CalibrationPath string `yaml:"calibration_path,omitempty"`
 	// JSONRetries for structured-output retry feedback loop.
 	JSONRetries int `yaml:"json_retries,omitempty"`
-	// SecretsPreFilter enables regex+entropy secret detector before LLM.
-	SecretsPreFilter bool `yaml:"secrets_pre_filter"`
 
 	// InterProc enables inter-procedural cross-file taint analysis (call graph
 	// + function summaries + IFDS-light fixed-point). Disable with --no-interproc.
@@ -217,7 +215,7 @@ type Config struct {
 	// Default model used when an agent does not override it.
 	DefaultModel ModelSpec `yaml:"default_model"`
 
-	// Per-agent overrides. Keys: orchestrator, injection, secrets, auth, crypto, deserialization, ssrf, generic, verifier, fp_filter, context_filter.
+	// Per-agent overrides. Keys: orchestrator, injection, auth, crypto, deserialization, ssrf, generic, verifier, fp_filter, context_filter.
 	Agents map[string]AgentConfig `yaml:"agents,omitempty"`
 
 	// Verifier behavior.
@@ -260,7 +258,6 @@ func Default() Config {
 		Agents: map[string]AgentConfig{
 			"orchestrator":      {Enabled: true},
 			"injection":         {Enabled: true},
-			"secrets":           {Enabled: true},
 			"auth":              {Enabled: true},
 			"crypto":            {Enabled: true},
 			"deserialization":   {Enabled: true},
@@ -293,7 +290,6 @@ func Default() Config {
 			VoteK:              0,
 			MinScore:           0.0,
 			JSONRetries:        2,
-			SecretsPreFilter:   true,
 			InterProc:          true,
 			InterProcMaxDepth:  6,
 			RefineThreshold:    3,

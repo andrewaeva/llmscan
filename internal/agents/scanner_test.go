@@ -50,7 +50,7 @@ func TestScannerScanParsesAndRebasesLines(t *testing.T) {
 
 func TestScannerScanEmptyFindings(t *testing.T) {
 	cli := &stubClient{responses: []string{`{"findings":[]}`}}
-	s := &Scanner{Name: "secrets", Client: cli, Scope: "secrets stuff"}
+	s := &Scanner{Name: "crypto", Client: cli, Scope: "crypto stuff"}
 	fnds, err := s.Scan(context.Background(), types.FileTarget{Path: "a.go"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestScannerScanEmptyFindings(t *testing.T) {
 		t.Errorf("expected 0 findings, got %d", len(fnds))
 	}
 	// Scope is used when no override
-	if !strings.Contains(cli.last.System, "secrets stuff") {
+	if !strings.Contains(cli.last.System, "crypto stuff") {
 		t.Errorf("scope not in system prompt: %q", cli.last.System)
 	}
 }
@@ -111,7 +111,7 @@ func TestScannerScanWithMarkdownFence(t *testing.T) {
 }
 
 func TestScopeForAgentKnown(t *testing.T) {
-	for _, name := range []string{"injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic"} {
+	for _, name := range []string{"injection", "auth", "crypto", "deserialization", "ssrf", "generic"} {
 		if scopeForAgent(name) == "" {
 			t.Errorf("scope empty for %s", name)
 		}

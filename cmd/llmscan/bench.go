@@ -28,7 +28,7 @@ func benchCmd() *cobra.Command {
 		Use:   "bench [-- extra go test flags]",
 		Short: "Run the built-in Go benchmarks for llmscan packages",
 		Long: `Runs the unit-level Go benchmarks shipped with llmscan
-(internal/secrets, watchlist, voting, baseline, chunker, cache, taint, ...).
+(internal/watchlist, voting, baseline, chunker, cache, taint, ...).
 Equivalent to:
   go test -run=^$ -bench=<pattern> -benchtime=<duration> [-benchmem] <pkg>
 

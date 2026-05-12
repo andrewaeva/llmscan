@@ -10,8 +10,8 @@ import (
 )
 
 // Static-analysis stages: discover, parse, prefilters (taint, interproc,
-// secrets, watchlist), orchestrator plan, RAG, cache opening. These stages
-// only touch deterministic analyzers (no scanner LLM calls).
+// watchlist), orchestrator plan, RAG, cache opening. These stages only
+// touch deterministic analyzers (no scanner LLM calls).
 
 func stageOpenASTCache(_ context.Context, e *Engine, _ *runState) error {
 	if !e.Cfg.ASTCache.Enabled {
@@ -102,15 +102,6 @@ func stageInterproc(_ context.Context, e *Engine, s *runState) error {
 	e.prog().Done("interproc")
 	e.logf("interproc: %d entrypoints, %d nodes, %d edges, %d taint paths",
 		len(s.entryPoints), len(s.cg.Nodes), len(s.cg.Edges()), len(s.interProcPaths))
-	return nil
-}
-
-func stageSecretsPrefilter(_ context.Context, e *Engine, s *runState) error {
-	e.prog().Stage("secrets-prefilter", len(s.files))
-	s.prefilterFindings = e.runSecretsPreFilter(s.files)
-	e.prog().Inc("secrets-prefilter", len(s.files))
-	e.prog().Done("secrets-prefilter")
-	e.logf("secrets pre-filter: %d deterministic findings", len(s.prefilterFindings))
 	return nil
 }
 

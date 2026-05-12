@@ -54,14 +54,6 @@ func TestResolveConfidence(t *testing.T) {
 			want: types.ConfMedium,
 		},
 		{
-			name: "secrets_prefilter_high",
-			in: types.Finding{
-				Severity: types.SevCritical, Confidence: types.ConfLow,
-				Agent: "secrets-prefilter",
-			},
-			want: types.ConfHigh,
-		},
-		{
 			name: "in_test_code_downgrades_one_step",
 			in: types.Finding{
 				Severity: types.SevHigh, Confidence: types.ConfHigh,

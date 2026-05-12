@@ -16,7 +16,7 @@ import (
 // auto-registered into the DAG by enabledScanners, but they're listed here so
 // the orchestrator's default focus plan includes them too.
 var ScannerNames = []string{
-	"injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic",
+	"injection", "auth", "crypto", "deserialization", "ssrf", "generic",
 	"insecure-defaults", "race-conditions", "error-handling", "supply-chain", "memory-safety",
 }
 
@@ -68,12 +68,12 @@ You MUST return a single JSON object with this shape:
 {
   "reasoning": "1-3 sentences explaining your plan",
   "priority": ["path/to/file1", "..."],
-  "focus":    ["injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic"],
+  "focus":    ["injection", "auth", "crypto", "deserialization", "ssrf", "generic"],
   "skip_globs": ["*.lock", "vendor/", ...],
-  "agent_hints": {"secrets": ["config/*.yaml"], "injection": ["api/*.go"]}
+  "agent_hints": {"injection": ["api/*.go"], "auth": ["middleware/*.go"]}
 }
 
-Pick at most 50 priority files (most likely to contain bugs / handle untrusted input / auth / secrets).
+Pick at most 50 priority files (most likely to contain bugs / handle untrusted input / auth).
 Focus must be a subset of the allowed agent names.
 No prose outside JSON.`
 
@@ -213,8 +213,6 @@ func scopeForAgent(name string) string {
 	switch name {
 	case "injection":
 		return "Injection vulnerabilities: SQL, NoSQL, command, LDAP, XPath, template injection; unsafe string concatenation reaching exec/query sinks."
-	case "secrets":
-		return "Hardcoded secrets: API keys, tokens, passwords, private keys, cloud credentials, JWT secrets, DB connection strings with passwords."
 	case "auth":
 		return "Authentication and authorization flaws: missing auth checks, broken access control, weak session handling, IDOR, JWT misuse."
 	case "crypto":

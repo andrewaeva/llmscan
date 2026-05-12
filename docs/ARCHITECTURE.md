@@ -18,7 +18,7 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
    ┌────────────────┴────────────────┐
    │  Static layer (no LLM)          │   Каждый stage — отдельная функция
    │  parse-AST → watchlist → taint  │   с собственным skip() и run().
-   │  → interproc → secrets-prefilter│   Добавление шага = одна строка
+   │  → interproc                    │   Добавление шага = одна строка
    └────────────────┬────────────────┘   в e.stages().
                     │
    ┌────────────────┴────────────────┐
@@ -63,7 +63,6 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | Taint | `internal/taint` | intra-file + interproc (IFDS-light, summaries) |
 | Watchlist | `internal/watchlist` | префильтр по sources/sinks |
 | Sanitizers | `internal/sanitizers` | словарь обезвреживающих функций |
-| Secrets | `internal/secrets` | regex+entropy детектор перед LLM |
 | IaC | `internal/iac` | детекция IaC файлов, доп. правила |
 | RAG | `internal/rag` | embeddings + keyword fallback, индекс чанков |
 | Кэш | `internal/cache` | SQLite: вердикты LLM, ContextPack, AST |
@@ -92,17 +91,16 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 5 | `suppressions` | `stages_static.go` | — | читает `// llmscan:ignore` |
 | 6 | `taint` | `stages_static.go` | `!Taint` | intra-file taint трассировки |
 | 7 | `interproc` | `stages_static.go` | `!Taint || !InterProc` | call-graph + function summaries + IFDS-light |
-| 8 | `secrets-prefilter` | `stages_static.go` | `!SecretsPreFilter` | regex+entropy секреты до LLM |
-| 9 | `load-knowledge` | `stages_static.go` | — | читает `<target>/.llmscan/knowledge.md` (≤ 8 KB) для инъекции в orchestrator-промпт |
-| 10 | `orchestrator` | `stages_static.go` | — | LLM-планировщик: focus агентов + priority файлов; здесь же загружаются few-shot banks |
-| 11 | `rag` | `stages_static.go` | `!RAG.Enabled` | embeddings или keyword index |
-| 12 | `cache` | `stages_static.go` | — | открывает SQLite-кэш вердиктов LLM |
-| 13 | `chunk` | `stages_chunk.go` | — | adaptive chunker: группирует symbols до TargetTokens, hard-cap MaxTokens |
-| 14 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
-| 15 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
-| 16 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
-| 17 | `post-process` | `postprocess.go` | — | dedupe, suppress, **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, stats |
-| 18 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
+| 8 | `load-knowledge` | `stages_static.go` | — | читает `<target>/.llmscan/knowledge.md` (≤ 8 KB) для инъекции в orchestrator-промпт |
+| 9 | `orchestrator` | `stages_static.go` | — | LLM-планировщик: focus агентов + priority файлов; здесь же загружаются few-shot banks |
+| 10 | `rag` | `stages_static.go` | `!RAG.Enabled` | embeddings или keyword index |
+| 11 | `cache` | `stages_static.go` | — | открывает SQLite-кэш вердиктов LLM |
+| 12 | `chunk` | `stages_chunk.go` | — | adaptive chunker: группирует symbols до TargetTokens, hard-cap MaxTokens |
+| 13 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
+| 14 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
+| 15 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
+| 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, stats |
+| 17 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
 
@@ -117,12 +115,11 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
         ▼                               ▼
    built-in scanners:            dynamic skills (skills/*/SKILL.md):
    injection                     insecure-defaults
-   secrets                       race-conditions
-   auth                          error-handling
-   crypto                        supply-chain
-   deserialization               memory-safety
-   ssrf                          + custom
-   generic
+   auth                          race-conditions
+   crypto                        error-handling
+   deserialization               supply-chain
+   ssrf                          memory-safety
+   generic                       + custom
         │
         ▼
    ┌──────────────┐
@@ -186,7 +183,6 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 
 - **Watchlist** (`internal/watchlist`): YAML словари sources/sinks/sanitizers. Файл без хоть одного хита по `Source` или `Sink` (для известного языка) выкидывается до того, как LLM его увидит.
 - **Taint** (`internal/taint`): intra-file прохождение от sources к sinks через AST + sanitizers. Когда `InterProc=true` — расширяется на call-graph с function summaries.
-- **Secrets pre-filter** (`internal/secrets`): regex + Шенноновская энтропия. Дают `Confidence=High`, `Score=0.95`, `Verified=true` — LLM такие не пересматривает.
 - **Reachability** (`internal/callgraph/reach.go`, `BuildReach` + `ReachIndex`): после LLM-пасса понижает confidence для findings в test/dead-code или вне reachability set от entry points.
 
 ## DAG и параллелизм
@@ -203,10 +199,9 @@ Deep-pass (опционально, `--deep`): для high-severity findings за
 
 1. Verifier verdict (HighConf/MediumConf/LowConf/FP).
 2. Taint trace presence.
-3. Secrets pre-filter (всегда High).
-4. Reachability downgrade (FPReason starts with `reachability:`).
-5. Vote consistency.
-6. Calibration model (когда `CalibrationPath` задан): isotonic regression поверх Score → empirical TPR. После калибровки `--min-score` отражает реальную вероятность true-positive.
+3. Reachability downgrade (FPReason starts with `reachability:`).
+4. Vote consistency.
+5. Calibration model (когда `CalibrationPath` задан): isotonic regression поверх Score → empirical TPR. После калибровки `--min-score` отражает реальную вероятность true-positive.
 
 ## Кэширование
 
@@ -228,7 +223,7 @@ Deep-pass (опционально, `--deep`): для high-severity findings за
 - `scan.{include,exclude,scope_roots,max_files,vcs}` — границы обхода
 - `scan.chunk.{target_tokens,max_tokens,min_tokens,fallback_lines}` — адаптивный чанкер
 - `scan.context.{level,budget_tokens,*_hops,*_max,include_*,*_max}` — ContextPack
-- `precision.{watchlist,taint,interproc,reach,secrets,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters,refine_threshold,refine_max_findings}` — переключатели, пороги и тюнинг LangChain-паттернов
+- `precision.{watchlist,taint,interproc,reach,vote_n,vote_k,min_score,calibration_path,interproc_max_depth,json_retries,fewshot_top_k,reflexion_skills,reflexion_max_iters,refine_threshold,refine_max_findings}` — переключатели, пороги и тюнинг LangChain-паттернов
 - `rag.{enabled,provider,model,top_k,batch_size}` — retrieval
 - `cache.{enabled,path}`, `ast_cache.{enabled,path}` — SQLite кэши
 - `baseline.{path,write}` — сравнение с прошлым прогоном

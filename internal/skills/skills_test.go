@@ -10,7 +10,7 @@ import (
 func expected() []string {
 	return []string{
 		// existing
-		"injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic",
+		"injection", "auth", "crypto", "deserialization", "ssrf", "generic",
 		"iac-docker", "iac-k8s", "iac-terraform", "iac-ghactions",
 		// new (Trail of Bits / OWASP inspired)
 		"insecure-defaults", "race-conditions", "error-handling", "supply-chain", "memory-safety",

@@ -21,7 +21,7 @@ func TestFPFilterDeterministicDedup(t *testing.T) {
 	in := []types.Finding{
 		{ID: "a", Agent: "injection", File: "a.go", StartLine: 10, EndLine: 12, RuleID: "sql", Severity: types.SevHigh, Confidence: types.ConfMedium},
 		{ID: "b", Agent: "injection", File: "a.go", StartLine: 10, EndLine: 12, RuleID: "sql", Severity: types.SevCritical, Confidence: types.ConfHigh},
-		{ID: "c", Agent: "secrets", File: "b.go", StartLine: 1, EndLine: 1, RuleID: "kv", Severity: types.SevLow, Confidence: types.ConfLow},
+		{ID: "c", Agent: "crypto", File: "b.go", StartLine: 1, EndLine: 1, RuleID: "kv", Severity: types.SevLow, Confidence: types.ConfLow},
 	}
 	out, err := f.Apply(context.Background(), in)
 	if err != nil {

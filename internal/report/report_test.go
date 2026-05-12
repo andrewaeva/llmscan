@@ -24,7 +24,7 @@ func sampleReport() types.Report {
 			AfterVerify: 3,
 			FalsePos:    1,
 			BySeverity:  map[string]int{"critical": 1, "high": 1, "medium": 0, "low": 1},
-			ByAgent:     map[string]int{"injection": 2, "secrets": 1},
+			ByAgent:     map[string]int{"injection": 2, "auth": 1},
 		},
 		Findings: []types.Finding{
 			{
@@ -45,9 +45,9 @@ func sampleReport() types.Report {
 				References:      []string{"https://example/owasp"},
 			},
 			{
-				ID: "f2", Title: "Hardcoded secret",
+				ID: "f2", Title: "Missing auth check",
 				Severity: types.SevHigh, Confidence: types.ConfMedium,
-				Agent: "secrets", File: "b.go", StartLine: 5, EndLine: 5,
+				Agent: "auth", File: "b.go", StartLine: 5, EndLine: 5,
 			},
 			{
 				ID: "f3", Title: "Low risk",
@@ -116,7 +116,7 @@ func TestWriteTextNoColor(t *testing.T) {
 		"fix:",
 		"sample:",
 		"injection",
-		"secrets",
+		"auth",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing substring %q in text output", want)

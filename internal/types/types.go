@@ -86,7 +86,7 @@ type Finding struct {
 	EndLine    int    `json:"end_line"`
 	CodeSample string `json:"code_sample,omitempty"`
 
-	// Agent that produced the finding (e.g. "injection", "secrets", "auth").
+	// Agent that produced the finding (e.g. "injection", "auth", "crypto").
 	Agent string `json:"agent"`
 
 	// Verification metadata. Populated by the Verifier agent.

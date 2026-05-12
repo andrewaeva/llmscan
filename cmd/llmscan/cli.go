@@ -141,7 +141,7 @@ func applyRAGAndSkillsOverrides(cfg *config.Config, f *scanFlags) {
 	}
 }
 
-var scannerAgentNames = []string{"injection", "secrets", "auth", "crypto", "deserialization", "ssrf", "generic"}
+var scannerAgentNames = []string{"injection", "auth", "crypto", "deserialization", "ssrf", "generic"}
 
 func applyFocusOverrides(cfg *config.Config, f *scanFlags) {
 	if len(f.focus) == 0 {
@@ -195,9 +195,6 @@ func applyPrecisionOverrides(cfg *config.Config, f *scanFlags) {
 	}
 	if f.noReach {
 		cfg.Precision.Reachability = false
-	}
-	if f.noSecretsPF {
-		cfg.Precision.SecretsPreFilter = false
 	}
 	if f.noInterproc {
 		cfg.Precision.InterProc = false

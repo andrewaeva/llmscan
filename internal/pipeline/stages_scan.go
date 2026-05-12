@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/tools"
@@ -59,7 +60,7 @@ func stageRunDAG(ctx context.Context, e *Engine, s *runState) error {
 func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	e.prog().Stage("post-process", 0)
 	final := pickFinalFindings(s.outputs, s.report)
-	final = append(final, s.prefilterFindings...)
+	final = dropSecretFindings(final)
 	e.applySuppressions(final, s.suppressions)
 	final = e.runRefinePass(ctx, final, s.chunks)
 	if e.Cfg.Precision.Reachability {
@@ -95,6 +96,31 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	s.report.Findings = final
 	s.final = final
 	return nil
+}
+
+// dropSecretFindings discards any finding whose rule_id or agent identifies
+// it as secret-detection output. Secrets detection was removed from llmscan;
+// this filter is the safety net catching anything a dynamic skill or generic
+// scanner might still produce under that label.
+func dropSecretFindings(in []types.Finding) []types.Finding {
+	out := in[:0]
+	for _, f := range in {
+		if isSecretFinding(f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func isSecretFinding(f types.Finding) bool {
+	if strings.Contains(strings.ToLower(f.RuleID), "secret") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(f.Agent), "secret") {
+		return true
+	}
+	return false
 }
 
 // pickFinalFindings extracts the canonical final-findings slice from DAG

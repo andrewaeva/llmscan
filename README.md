@@ -50,7 +50,7 @@ go build -o llmscan ./cmd/llmscan
 
 ```
 discover → parse-ast → depgraph → diff-filter → watchlist →
-taint → symexpand → secrets-prefilter → load-knowledge →
+taint → symexpand → load-knowledge →
 orchestrator → RAG → [scanners ∥ + IaC] → dedup → verifier →
 fp_filter → suppress → refine → reachability → deep (+debate) →
 score-filter → baseline → write-knowledge → report
@@ -120,7 +120,7 @@ deep:
 | `--fast` | отключает orchestrator/verifier/fp_filter |
 | `--deep` | sub-agent верификация high+ через read-only tools |
 | `--scope-root DIR` (repeat), `--max-files N` | подграфы монорепо |
-| `--no-{watchlist,symexpand,taint,reachability,secrets-prefilter,cache,ast-cache}` | выключить слои |
+| `--no-{watchlist,symexpand,taint,reachability,cache,ast-cache}` | выключить слои |
 | `--agent-parallel N`, `--concurrency N` | параллелизм |
 
 Полный список — `./llmscan scan --help`.
@@ -159,7 +159,7 @@ AST-кеш sqlite (`.llmscan/ast-cache.db`) включён по умолчани
 Каждый — `skills/<name>/SKILL.md` с YAML-фронтматтером и промптом;
 подгружаются динамически.
 
-**Code:** `injection`, `secrets`, `auth`, `crypto`, `deserialization`, `ssrf`,
+**Code:** `injection`, `auth`, `crypto`, `deserialization`, `ssrf`,
 `generic`, `insecure-defaults`, `race-conditions`, `error-handling`,
 `supply-chain`, `memory-safety`.
 

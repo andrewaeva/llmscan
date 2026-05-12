@@ -27,9 +27,9 @@ func TestOrchestratorParsesPlan(t *testing.T) {
 	resp := `{
 		"reasoning": "looks injectable",
 		"priority": ["a.go","b.go"],
-		"focus": ["injection","secrets"],
+		"focus": ["injection","auth"],
 		"skip_globs": ["*.lock"],
-		"agent_hints": {"secrets":["b.go"]}
+		"agent_hints": {"injection":["b.go"]}
 	}`
 	cli := &stubClient{responses: []string{resp}}
 	o := &Orchestrator{Client: cli}

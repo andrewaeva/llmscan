@@ -17,7 +17,7 @@ func main() {
 	root := &cobra.Command{
 		Use:           "llmscan",
 		Short:         "LLM-based multi-agent code security scanner",
-		Long:          "llmscan inspects a codebase with a hierarchy of specialized LLM agents: Orchestrator -> Scanner agents (DAG) -> Verifier -> FP-filter. v3 adds watchlist pre-filter, secrets pre-filter, taint analysis, reachability, structured JSON output, sqlite cache, baseline/diff mode, IaC scanners, voting, and evaluation harness.",
+		Long:          "llmscan inspects a codebase with a hierarchy of specialized LLM agents: Orchestrator -> Scanner agents (DAG) -> Verifier -> FP-filter. v3 adds watchlist pre-filter, taint analysis, reachability, structured JSON output, sqlite cache, baseline/diff mode, IaC scanners, voting, and evaluation harness.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -78,7 +78,6 @@ agents:
     enabled: true
     # model: { provider: openai, model: gpt-4o-mini }
   injection:         { enabled: true }
-  secrets:           { enabled: true }
   auth:              { enabled: true }
   crypto:            { enabled: true }
   deserialization:   { enabled: true }
@@ -126,7 +125,6 @@ precision:
   sym_expand_max:      4
   taint:               true    # source -> sanitizer -> sink chain detection (5 languages)
   reachability:        true    # downgrade findings in test/dead code
-  secrets_pre_filter:  true    # regex + Shannon entropy secrets detector
   json_retries:        2       # structured-output retry loop on schema validation failures
   vote_n:              0       # self-consistency voting (>=2 to enable)
   vote_k:              0       # majority threshold (default ceil(N/2))

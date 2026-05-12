@@ -33,8 +33,8 @@ func TestDefaultBaseline(t *testing.T) {
 	if c.Scan.MaxFileBytes == 0 || c.Scan.Chunk.TargetTokens == 0 {
 		t.Errorf("scan defaults missing: %+v", c.Scan)
 	}
-	if !c.Precision.PreFilterWatchlist || !c.Precision.SecretsPreFilter {
-		t.Error("precision defaults should enable watchlist+secrets prefilter")
+	if !c.Precision.PreFilterWatchlist {
+		t.Error("precision defaults should enable watchlist prefilter")
 	}
 	if c.Precision.JSONRetries != 2 {
 		t.Errorf("json retries = %d", c.Precision.JSONRetries)

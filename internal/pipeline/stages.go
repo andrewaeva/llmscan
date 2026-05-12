@@ -2,9 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/andrewaeva/llmscan/internal/agents"
 	myast "github.com/andrewaeva/llmscan/internal/ast"
@@ -13,7 +11,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/iac"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
-	"github.com/andrewaeva/llmscan/internal/secrets"
 	"github.com/andrewaeva/llmscan/internal/skills"
 	"github.com/andrewaeva/llmscan/internal/suppress"
 	"github.com/andrewaeva/llmscan/internal/types"
@@ -211,34 +208,6 @@ func (e *Engine) collectSuppressions(files []types.FileTarget) []suppress.Suppre
 		all = append(all, suppress.Parse(f.Path, f.Content)...)
 	}
 	return all
-}
-
-// runSecretsPreFilter performs deterministic secret detection before any LLM call.
-func (e *Engine) runSecretsPreFilter(files []types.FileTarget) []types.Finding {
-	var out []types.Finding
-	for _, f := range files {
-		for _, m := range secrets.ScanText(f.Path, f.Content) {
-			out = append(out, types.Finding{
-				ID:          fmt.Sprintf("secrets-%s-%s:%d", m.RuleID, f.Path, m.Line),
-				RuleID:      m.RuleID,
-				Title:       m.Title,
-				Description: fmt.Sprintf("Pre-filter match (entropy=%.2f, snippet=%s)", m.Entropy, m.Snippet),
-				Severity:    types.Severity(m.Severity),
-				Confidence:  types.ConfHigh,
-				Score:       0.95,
-				CWE:         m.CWE,
-				File:        f.Path,
-				StartLine:   m.Line,
-				EndLine:     m.Line,
-				CodeSample:  m.Snippet,
-				Agent:       "secrets-prefilter",
-				Verified:    true,
-				Tags:        []string{"secrets", "deterministic"},
-				CreatedAt:   time.Now(),
-			})
-		}
-	}
-	return out
 }
 
 // ---- Orchestrator plan + RAG index ----

@@ -35,8 +35,7 @@ type scanFlags struct {
 
 	// v3
 	diffRange, baseline, baselineWrite           string
-	noWatchlist, noTaint, noReach   bool
-	noSecretsPF                                  bool
+	noWatchlist, noTaint, noReach                bool
 	noOrchestrator, noVerifier, noFPFilter, fast bool
 	minScore                                     float64
 	calibrationPath                              string
@@ -181,7 +180,7 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "Verbose logging")
 	cmd.Flags().StringSliceVar(&f.include, "include", nil, "Include filename globs (e.g. '*.go')")
 	cmd.Flags().StringSliceVar(&f.exclude, "exclude", nil, "Exclude patterns (substring match)")
-	cmd.Flags().StringSliceVar(&f.focus, "focus", nil, "Limit scanner agents (subset of: injection,secrets,auth,crypto,deserialization,ssrf,generic)")
+	cmd.Flags().StringSliceVar(&f.focus, "focus", nil, "Limit scanner agents (subset of: injection,auth,crypto,deserialization,ssrf,generic)")
 	cmd.Flags().StringVar(&f.failOn, "fail-on", "", "Exit with code 2 if any finding meets this severity threshold (critical|high|medium|low)")
 	cmd.Flags().StringVar(&f.projectCtx, "project-context", "", "Free-form project context passed to the orchestrator")
 	cmd.Flags().BoolVar(&f.ragEnabled, "rag", false, "Enable RAG index for context retrieval (sqlite-backed cache by default)")
@@ -196,7 +195,6 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 	cmd.Flags().BoolVar(&f.noWatchlist, "no-watchlist", false, "Disable per-language source/sink watchlist pre-filter")
 	cmd.Flags().BoolVar(&f.noTaint, "no-taint", false, "Disable taint analysis (source -> sanitizer -> sink chains)")
 	cmd.Flags().BoolVar(&f.noReach, "no-reachability", false, "Disable reachability downgrade (test/dead code)")
-	cmd.Flags().BoolVar(&f.noSecretsPF, "no-secrets-prefilter", false, "Disable regex+entropy secrets pre-filter")
 	cmd.Flags().BoolVar(&f.noInterproc, "no-interproc", false, "Disable inter-procedural cross-file taint (fall back to intra-file taint only)")
 	cmd.Flags().IntVar(&f.interprocMaxDepth, "interproc-max-depth", 0, "Max hops for inter-procedural taint paths (default 6)")
 	cmd.Flags().BoolVar(&f.showCallGraph, "show-callgraph", false, "Print the inter-procedural call graph as DOT and exit (debug)")

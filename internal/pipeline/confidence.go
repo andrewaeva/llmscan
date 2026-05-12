@@ -9,8 +9,8 @@ import (
 
 // resolveConfidence computes the final Confidence for a finding from all the
 // signals collected during the pipeline (scanner self-report, verifier verdict,
-// deep sub-agent verdict, taint trace presence, secrets pre-filter, reach
-// downgrade reason, severity).
+// deep sub-agent verdict, taint trace presence, reach downgrade reason,
+// severity).
 //
 // Priority rules (highest wins, then a single bounded downgrade for test/dead
 // code that still cannot push below the floor set by strong evidence):
@@ -18,14 +18,13 @@ import (
 //   - deep "confirmed"            -> high
 //   - verifier "true_positive"    -> high   (and not false_positive)
 //   - taint trace present         -> at least medium
-//   - secrets-prefilter           -> high   (regex+entropy is deterministic)
 //   - critical/high severity      -> at least medium
 //   - explicit value from scanner -> respected
 //   - otherwise                   -> low
 //
 // A test/dead-code reachability downgrade lowers by one level, but never
 // below medium when both verifier and deep agree, and never below the
-// taint/secrets floor.
+// taint floor.
 //
 //nolint:gocyclo // multi-signal confidence resolution; flat by design
 func resolveConfidence(f types.Finding) types.Confidence {
@@ -35,11 +34,6 @@ func resolveConfidence(f types.Finding) types.Confidence {
 	// 2) Strong signals that REQUIRE at least medium / high.
 	floor := types.Confidence("")
 	ceiling := types.Confidence("")
-
-	// Deterministic secrets pre-filter is high precision by construction.
-	if f.Agent == "secrets-prefilter" {
-		floor = atLeast(floor, types.ConfHigh)
-	}
 
 	// Verifier said true_positive and didn't mark FP -> boost to high.
 	verifierConfirmed := !f.FalsePositive &&
@@ -71,7 +65,7 @@ func resolveConfidence(f types.Finding) types.Confidence {
 	// 3) Reachability/test downgrade. The reach pass writes
 	// FPReason = "reachability: ..." when it lowers confidence. We treat that
 	// as a single one-step downgrade applied AFTER the floor, but verifier+deep
-	// or secrets-prefilter prevent dropping below medium.
+	// prevent dropping below medium.
 	reachDowngrade := strings.HasPrefix(f.FPReason, "reachability:") || looksLikeTestPath(f.File)
 
 	resolved := maxConf(cur, floor)
@@ -82,7 +76,7 @@ func resolveConfidence(f types.Finding) types.Confidence {
 	if reachDowngrade {
 		// Lower one level, but respect the strong-evidence floor.
 		strongFloor := types.Confidence("")
-		if f.Agent == "secrets-prefilter" || (verifierConfirmed && deepConfirmed) {
+		if verifierConfirmed && deepConfirmed {
 			strongFloor = types.ConfHigh
 		} else if verifierConfirmed || deepConfirmed {
 			strongFloor = types.ConfMedium

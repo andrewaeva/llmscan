@@ -39,17 +39,6 @@ func TestReachDowngradeDoesNotClobberVerifiedConfidence(t *testing.T) {
 	if got := resolveConfidence(in2); got != types.ConfMedium {
 		t.Errorf("verified+test-path must stay ≥medium, got %q", got)
 	}
-
-	// Secrets-prefilter with reach downgrade keeps high.
-	in3 := types.Finding{
-		Severity:   types.SevCritical,
-		Confidence: types.ConfLow,
-		File:       "tests/fixtures/secrets.py",
-		Agent:      "secrets-prefilter",
-	}
-	if got := resolveConfidence(in3); got != types.ConfHigh {
-		t.Errorf("secrets-prefilter must remain high even in test path, got %q", got)
-	}
 }
 
 // TestDedupAndCountWithIdenticalKeysReducesToOne ensures the pipeline's

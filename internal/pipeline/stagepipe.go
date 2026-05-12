@@ -25,8 +25,7 @@ import (
 //	discover      → Files, Report.FilesScanned
 //	parseAST      → ASTByPath, ASTList, Graph
 //	prefilters    → Files (filtered), Suppressions, TaintTraces,
-//	                CG, Entrypoints, InterProcPaths, ReachableFiles,
-//	                PrefilterFindings
+//	                CG, Entrypoints, InterProcPaths, ReachableFiles
 //	plan          → SkillByName, Plan, Report.Plan
 //	rag+cache     → Index, CacheDB
 //	chunk+DAG     → Chunks, Prioritized, EnabledScanners, ScanCtx, DAG
@@ -48,13 +47,12 @@ type runState struct {
 	graph     *depgraph.Graph
 
 	// Pre-filter / static-analysis artifacts.
-	suppressions      []suppress.Suppression
-	taintTraces       map[string][]taint.Trace
-	cg                *callgraph.CallGraph
-	entryPoints       []callgraph.Info
-	interProcPaths    []taint.TaintPath
-	reachableFiles    map[string]bool
-	prefilterFindings []types.Finding
+	suppressions   []suppress.Suppression
+	taintTraces    map[string][]taint.Trace
+	cg             *callgraph.CallGraph
+	entryPoints    []callgraph.Info
+	interProcPaths []taint.TaintPath
+	reachableFiles map[string]bool
 
 	// Skills + plan.
 	skillByName map[string]*skills.Skill
