@@ -275,7 +275,46 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return cfg, fmt.Errorf("invalid config %s: %w", path, err)
+	}
 	return cfg, nil
+}
+
+// Validate checks the configuration for obviously-broken combinations and
+// out-of-range numbers. It does NOT enforce any business logic that callers
+// might intentionally override at the CLI; only invariants that would cause
+// silent misbehaviour deep inside the pipeline.
+func (c Config) Validate() error {
+	p := c.Precision
+	if p.VoteN < 0 {
+		return fmt.Errorf("precision.vote_n=%d must be >= 0", p.VoteN)
+	}
+	if p.VoteK < 0 {
+		return fmt.Errorf("precision.vote_k=%d must be >= 0", p.VoteK)
+	}
+	if p.VoteN > 0 && p.VoteK > p.VoteN {
+		return fmt.Errorf("precision.vote_k=%d cannot exceed vote_n=%d", p.VoteK, p.VoteN)
+	}
+	if p.MinScore < 0 || p.MinScore > 1 {
+		return fmt.Errorf("precision.min_score=%v must be in [0,1]", p.MinScore)
+	}
+	if p.InterProcMaxDepth < 0 {
+		return fmt.Errorf("precision.interproc_max_depth=%d must be >= 0", p.InterProcMaxDepth)
+	}
+	if p.SymExpandHops < 0 {
+		return fmt.Errorf("precision.sym_expand_hops=%d must be >= 0", p.SymExpandHops)
+	}
+	if p.SymExpandMax < 0 {
+		return fmt.Errorf("precision.sym_expand_max=%d must be >= 0", p.SymExpandMax)
+	}
+	if p.JSONRetries < 0 {
+		return fmt.Errorf("precision.json_retries=%d must be >= 0", p.JSONRetries)
+	}
+	if c.Deep.MaxHotspots < 0 || c.Deep.Budget < 0 || c.Deep.Concurrency < 0 {
+		return fmt.Errorf("deep.* counters must be >= 0")
+	}
+	return nil
 }
 
 // ResolveModel returns the model spec for an agent, falling back to DefaultModel and filling in env-derived API key info.

@@ -19,6 +19,7 @@ package calibration
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -32,9 +33,17 @@ type Sample struct {
 	TP    bool    `json:"tp"`
 }
 
+// SchemaVersion is the on-disk format version. Bump when the JSON layout of
+// Model changes in a non-backwards-compatible way (renamed fields, changed
+// knot semantics, etc.). Load() rejects files with a higher schema version
+// and warns on lower versions.
+const SchemaVersion = 1
+
 // Model is a piecewise-constant non-decreasing mapping from raw score to
 // empirical true-positive probability. Knots are sorted by X (raw score).
 type Model struct {
+	// Schema is the on-disk format version. 0 in legacy files; treated as 1.
+	Schema    int       `json:"schema,omitempty"`
 	Method    string    `json:"method"`           // "isotonic-pav" or "platt"
 	CreatedAt time.Time `json:"created_at"`
 	NSamples  int       `json:"n_samples"`
@@ -42,6 +51,10 @@ type Model struct {
 	// Brier score on the training set (lower is better, 0 is perfect).
 	Brier float64 `json:"brier,omitempty"`
 }
+
+// ErrSchemaTooNew is returned by Load when a model file was produced by a
+// newer build of llmscan and may use fields this binary doesn't understand.
+var ErrSchemaTooNew = errors.New("calibration: model schema is newer than this build supports")
 
 // Knot is one breakpoint of the fitted step function.
 type Knot struct {
@@ -176,19 +189,28 @@ func brier(m *Model, samples []Sample) float64 {
 	return sum / float64(len(samples))
 }
 
-// Save writes the model as JSON.
+// Save writes the model as JSON. The current SchemaVersion is stamped into
+// the file regardless of the value passed in m.
 func Save(path string, m *Model) error {
-	data, err := json.MarshalIndent(m, "", "  ")
+	if m == nil {
+		return errors.New("calibration save: nil model")
+	}
+	copy := *m
+	copy.Schema = SchemaVersion
+	data, err := json.MarshalIndent(&copy, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("calibration save: %w", err)
 	}
 	return nil
 }
 
-// Load reads a model from JSON.
+// Load reads a model from JSON. Files with Schema==0 are treated as v1 for
+// backward compatibility with models produced before SchemaVersion existed.
+// Files with a higher Schema return ErrSchemaTooNew so callers can decide
+// whether to abort or fall back to uncalibrated scoring.
 func Load(path string) (*Model, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -197,6 +219,12 @@ func Load(path string) (*Model, error) {
 	var m Model
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("calibration load: %w", err)
+	}
+	if m.Schema == 0 {
+		m.Schema = 1 // legacy file
+	}
+	if m.Schema > SchemaVersion {
+		return nil, fmt.Errorf("%w: file=%d, supported=%d", ErrSchemaTooNew, m.Schema, SchemaVersion)
 	}
 	return &m, nil
 }

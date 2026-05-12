@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -14,7 +15,6 @@ import (
 	"github.com/andrewaeva/llmscan/internal/callgraph"
 	"github.com/andrewaeva/llmscan/internal/depgraph"
 	"github.com/andrewaeva/llmscan/internal/entrypoints"
-	"github.com/andrewaeva/llmscan/internal/rag"
 	"github.com/andrewaeva/llmscan/internal/reach"
 	"github.com/andrewaeva/llmscan/internal/suppress"
 	"github.com/andrewaeva/llmscan/internal/symexpand"
@@ -23,221 +23,309 @@ import (
 	"github.com/andrewaeva/llmscan/internal/util"
 )
 
+// stages returns the ordered pipeline. Adding a step here is the only place
+// callers need to touch; runtime gating is handled by each stage's skip().
+func (e *Engine) stages() []stage {
+	return []stage{
+		{name: "ast-cache", run: stageOpenASTCache},
+		{name: "discover", run: stageDiscover},
+		{name: "parse-ast", run: stageParseAST},
+		{name: "watchlist",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Precision.PreFilterWatchlist },
+			run:  stageWatchlist},
+		{name: "suppressions", run: stageSuppressions},
+		{name: "taint",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Precision.Taint },
+			run:  stageTaint},
+		{name: "interproc",
+			skip: func(e *Engine, _ *runState) bool { return !(e.Cfg.Precision.Taint && e.Cfg.Precision.InterProc) },
+			run:  stageInterproc},
+		{name: "symexpand",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Precision.SymbolExpansion },
+			run:  stageSymExpand},
+		{name: "secrets-prefilter",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.Precision.SecretsPreFilter },
+			run:  stageSecretsPrefilter},
+		{name: "orchestrator", run: stageOrchestrator},
+		{name: "rag",
+			skip: func(e *Engine, _ *runState) bool { return !e.Cfg.RAG.Enabled },
+			run:  stageRAG},
+		{name: "cache", run: stageOpenCache},
+		{name: "chunk", run: stageChunk},
+		{name: "dag-build", run: stageBuildDAG},
+		{name: "scanners", run: stageRunDAG},
+		{name: "post-process", run: stagePostProcess},
+	}
+}
+
 // Run executes the full pipeline on `target` (file or directory).
-//
-//nolint:gocyclo // sequential pipeline stages; flat is intentional
 func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 	report := types.Report{
 		Target:    target,
 		StartedAt: time.Now(),
 		Stats:     types.Stats{BySeverity: map[string]int{}, ByAgent: map[string]int{}},
 	}
+	st := &runState{target: target, report: &report}
 
-	// 0) Open AST cache (best-effort; falls back to nil = no cache).
-	if e.Cfg.ASTCache.Enabled {
-		path := e.Cfg.ASTCache.Path
-		if path == "" {
-			path = ".llmscan/ast-cache.db"
+	// astCache is opened in stageOpenASTCache and must be closed last, before
+	// the cache DB (which is opened in stageOpenCache).
+	defer e.closeASTCache()
+	defer st.closeCacheDB()
+
+	for _, s := range e.stages() {
+		if s.skip != nil && s.skip(e, st) {
+			continue
 		}
-		if c, err := myast.OpenCache(path); err != nil {
-			e.logf("ast cache: %v (continuing without cache)", err)
-		} else {
-			e.astCache = c
-			if e.Cfg.ASTCache.Clear {
-				if err := c.Clear(); err != nil {
-					e.logf("ast cache clear: %v", err)
-				}
+		if err := s.run(ctx, e, st); err != nil {
+			if errors.Is(err, errPipelineAbort) {
+				break
 			}
-			defer func() {
-				st := c.Stats()
-				e.logf("ast cache: hits=%d misses=%d stores=%d errors=%d", st.Hits, st.Misses, st.Stores, st.Errors)
-				_ = c.Close()
-			}()
+			return report, fmt.Errorf("stage %s: %w", s.name, err)
 		}
 	}
 
-	// 1) Discover files.
-	e.prog().Stage("discover", 0)
-	files, err := e.discoverFiles(target)
+	report.FinishedAt = time.Now()
+	return report, nil
+}
+
+func (e *Engine) closeASTCache() {
+	if e.astCache == nil {
+		return
+	}
+	st := e.astCache.Stats()
+	e.logf("ast cache: hits=%d misses=%d stores=%d errors=%d", st.Hits, st.Misses, st.Stores, st.Errors)
+	_ = e.astCache.Close()
+	e.astCache = nil
+}
+
+func (s *runState) closeCacheDB() {
+	if s.cacheDB == nil {
+		return
+	}
+	_ = s.cacheDB.Close()
+	s.cacheDB = nil
+}
+
+// --- Stage implementations -------------------------------------------------
+
+func stageOpenASTCache(_ context.Context, e *Engine, _ *runState) error {
+	if !e.Cfg.ASTCache.Enabled {
+		return nil
+	}
+	path := e.Cfg.ASTCache.Path
+	if path == "" {
+		path = ".llmscan/ast-cache.db"
+	}
+	c, err := myast.OpenCache(path)
 	if err != nil {
-		return report, err
+		e.logf("ast cache: %v (continuing without cache)", err)
+		return nil
+	}
+	e.astCache = c
+	if e.Cfg.ASTCache.Clear {
+		if err := c.Clear(); err != nil {
+			e.logf("ast cache clear: %v", err)
+		}
+	}
+	return nil
+}
+
+func stageDiscover(ctx context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("discover", 0)
+	files, err := e.discoverFiles(s.target)
+	if err != nil {
+		return err
 	}
 	if e.Cfg.Diff.Range != "" {
-		files = e.applyDiffFilter(ctx, files, target)
+		files = e.applyDiffFilter(ctx, files, s.target)
 		e.logf("diff %q: %d files in scope", e.Cfg.Diff.Range, len(files))
 	}
-	report.FilesScanned = len(files)
+	s.files = files
+	s.report.FilesScanned = len(files)
 	e.prog().SetTotal("discover", len(files))
 	e.prog().Inc("discover", len(files))
 	e.prog().Done("discover")
 	e.logf("discovered %d files", len(files))
+	return nil
+}
 
-	// 2) Parse ASTs and build dependency graph.
-	e.prog().Stage("parse-ast", len(files))
-	astByPath, astList := e.parseASTs(ctx, files)
-	e.prog().Inc("parse-ast", len(astList))
+func stageParseAST(ctx context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("parse-ast", len(s.files))
+	s.astByPath, s.astList = e.parseASTs(ctx, s.files)
+	e.prog().Inc("parse-ast", len(s.astList))
 	e.prog().Done("parse-ast")
-	e.logf("parsed AST for %d files", len(astList))
-	graph := depgraph.New(target, astList)
-	if graph.HasCycle() {
+	e.logf("parsed AST for %d files", len(s.astList))
+	s.graph = depgraph.New(s.target, s.astList)
+	if s.graph.HasCycle() {
 		e.logf("note: dependency graph contains cycles")
 	}
+	return nil
+}
 
-	// 3) Pre-filters and lightweight static analyses.
-	if e.Cfg.Precision.PreFilterWatchlist {
-		e.prog().Stage("watchlist", 0)
-		before := len(files)
-		files = e.applyWatchlistPreFilter(files, astByPath)
-		e.prog().SetTotal("watchlist", before)
-		e.prog().Inc("watchlist", before)
-		e.prog().Done("watchlist")
-		e.logf("watchlist pre-filter: %d -> %d files", before, len(files))
-	}
-	suppressions := e.collectSuppressions(files)
-	var taintTraces map[string][]taint.Trace
-	if e.Cfg.Precision.Taint {
-		e.prog().Stage("taint", len(astList))
-		taintTraces = taint.Analyze(astList)
-		e.prog().Inc("taint", len(taintTraces))
-		e.prog().Done("taint")
-		e.logf("taint: %d files analyzed", len(taintTraces))
-	}
+func stageWatchlist(_ context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("watchlist", 0)
+	before := len(s.files)
+	s.files = e.applyWatchlistPreFilter(s.files, s.astByPath)
+	e.prog().SetTotal("watchlist", before)
+	e.prog().Inc("watchlist", before)
+	e.prog().Done("watchlist")
+	e.logf("watchlist pre-filter: %d -> %d files", before, len(s.files))
+	return nil
+}
 
-	// 3a) Inter-procedural taint (call-graph + function summaries + IFDS-light).
-	var (
-		cg             *callgraph.CallGraph
-		entryPoints    []entrypoints.Info
-		interProcPaths []taint.TaintPath
-		reachableFiles map[string]bool
-	)
-	if e.Cfg.Precision.Taint && e.Cfg.Precision.InterProc {
-		e.prog().Stage("interproc", 0)
-		cg = callgraph.Build(astList, graph)
-		entryPoints = entrypoints.Detect(astList)
-		interProcPaths = taint.AnalyzeInterProc(astList, cg, graph, entryPoints,
-			taint.Options{MaxDepth: e.Cfg.Precision.InterProcMaxDepth})
-		reachableFiles = reachableFileSet(cg, entryPoints)
-		e.prog().Done("interproc")
-		e.logf("interproc: %d entrypoints, %d nodes, %d edges, %d taint paths",
-			len(entryPoints), len(cg.Nodes), len(cg.Edges()), len(interProcPaths))
-	}
-	var expander *symexpand.Expander
-	if e.Cfg.Precision.SymbolExpansion {
-		expander = symexpand.New(astList)
-	}
-	var prefilterFindings []types.Finding
-	if e.Cfg.Precision.SecretsPreFilter {
-		e.prog().Stage("secrets-prefilter", len(files))
-		prefilterFindings = e.runSecretsPreFilter(files)
-		e.prog().Inc("secrets-prefilter", len(files))
-		e.prog().Done("secrets-prefilter")
-		e.logf("secrets pre-filter: %d deterministic findings", len(prefilterFindings))
-	}
+func stageSuppressions(_ context.Context, e *Engine, s *runState) error {
+	s.suppressions = e.collectSuppressions(s.files)
+	return nil
+}
 
-	// 4) Skills + orchestrator plan.
-	skillByName := e.loadSkills()
+func stageTaint(_ context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("taint", len(s.astList))
+	s.taintTraces = taint.Analyze(s.astList)
+	e.prog().Inc("taint", len(s.taintTraces))
+	e.prog().Done("taint")
+	e.logf("taint: %d files analyzed", len(s.taintTraces))
+	return nil
+}
+
+func stageInterproc(_ context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("interproc", 0)
+	s.cg = callgraph.Build(s.astList, s.graph)
+	s.entryPoints = entrypoints.Detect(s.astList)
+	s.interProcPaths = taint.AnalyzeInterProc(s.astList, s.cg, s.graph, s.entryPoints,
+		taint.Options{MaxDepth: e.Cfg.Precision.InterProcMaxDepth})
+	s.reachableFiles = reachableFileSet(s.cg, s.entryPoints)
+	e.prog().Done("interproc")
+	e.logf("interproc: %d entrypoints, %d nodes, %d edges, %d taint paths",
+		len(s.entryPoints), len(s.cg.Nodes), len(s.cg.Edges()), len(s.interProcPaths))
+	return nil
+}
+
+func stageSymExpand(_ context.Context, _ *Engine, s *runState) error {
+	s.expander = symexpand.New(s.astList)
+	return nil
+}
+
+func stageSecretsPrefilter(_ context.Context, e *Engine, s *runState) error {
+	e.prog().Stage("secrets-prefilter", len(s.files))
+	s.prefilterFindings = e.runSecretsPreFilter(s.files)
+	e.prog().Inc("secrets-prefilter", len(s.files))
+	e.prog().Done("secrets-prefilter")
+	e.logf("secrets pre-filter: %d deterministic findings", len(s.prefilterFindings))
+	return nil
+}
+
+func stageOrchestrator(ctx context.Context, e *Engine, s *runState) error {
+	s.skillByName = e.loadSkills()
 	e.prog().Stage("orchestrator", 0)
-	plan, perr := e.planStep(ctx, target, files, graph)
+	plan, perr := e.planStep(ctx, s.target, s.files, s.graph)
 	e.prog().Done("orchestrator")
 	if perr != nil {
 		e.logf("orchestrator: %v (using fallback plan)", perr)
 	}
-	report.Plan = plan
+	s.plan = plan
+	s.report.Plan = plan
+	return nil
+}
 
-	// 5) Optional RAG + cache.
-	var index *rag.Index
-	if e.Cfg.RAG.Enabled {
-		index = e.buildRAG(ctx, files, astByPath)
-	}
-	cdb := e.openCacheDB()
-	if cdb != nil {
-		defer cdb.Close()
-	}
+func stageRAG(ctx context.Context, e *Engine, s *runState) error {
+	s.index = e.buildRAG(ctx, s.files, s.astByPath)
+	return nil
+}
 
-	// 6) Build chunk queue.
-	prioritized := applyPlan(files, plan)
+func stageOpenCache(_ context.Context, e *Engine, s *runState) error {
+	s.cacheDB = e.openCacheDB()
+	return nil
+}
+
+func stageChunk(_ context.Context, e *Engine, s *runState) error {
+	s.prioritized = applyPlan(s.files, s.plan)
 	var chunks []types.FileTarget
-	for _, f := range prioritized {
+	for _, f := range s.prioritized {
 		chunks = append(chunks, util.ChunkFile(f, e.Cfg.Scan.ChunkLines, e.Cfg.Scan.ChunkOverlap)...)
 	}
-	e.prog().Stage("scanners", len(chunks))
-	e.logf("scanning %d chunks across %d files", len(chunks), len(prioritized))
+	s.chunks = chunks
+	e.logf("scanning %d chunks across %d files", len(chunks), len(s.prioritized))
+	return nil
+}
 
-	// 7) Assemble DAG.
-	enabledScanners := e.enabledScanners(plan, skillByName, files)
+func stageBuildDAG(_ context.Context, e *Engine, s *runState) error {
+	s.enabledScanners = e.enabledScanners(s.plan, s.skillByName, s.files)
 	sc := scanContext{
-		chunks:         chunks,
+		chunks:         s.chunks,
 		contentByPath:  map[string]string{},
-		index:          index,
-		expander:       expander,
-		taintTraces:    taintTraces,
-		interProcPaths: interProcPaths,
-		deps:           graph.AsFileMap(),
-		suppress:       suppressions,
+		index:          s.index,
+		expander:       s.expander,
+		taintTraces:    s.taintTraces,
+		interProcPaths: s.interProcPaths,
+		deps:           s.graph.AsFileMap(),
+		suppress:       s.suppressions,
 	}
-	for _, f := range prioritized {
+	for _, f := range s.prioritized {
 		sc.contentByPath[f.Path] = f.Content
 	}
-	d, err := e.buildDAG(enabledScanners, skillByName, sc)
+	s.scanCtx = sc
+	d, err := e.buildDAG(s.enabledScanners, s.skillByName, sc)
 	if err != nil {
-		return report, fmt.Errorf("dag build: %w", err)
+		return fmt.Errorf("dag build: %w", err)
 	}
+	s.dag = d
 	e.logf("DAG layers: %v", d.Layers())
+	return nil
+}
 
-	// 8) Execute. DAG-level parallelism gates the number of scanner *agents*
-	// running concurrently; per-chunk parallelism is gated separately inside
-	// each scanner node via Scan.Concurrency.
+func stageRunDAG(ctx context.Context, e *Engine, s *runState) error {
 	agentPar := e.Cfg.Scan.AgentParallel
 	if agentPar <= 0 {
-		agentPar = max(len(enabledScanners), 4)
+		agentPar = max(len(s.enabledScanners), 4)
 	}
-	outputs, dagErrs := d.Run(ctx, agentPar)
-	e.prog().Inc("scanners", len(chunks))
+	// Honest total: each enabled scanner agent runs over every chunk.
+	// runScanner increments "scanners" by 1 per chunk; verifier/fp/deep are
+	// reported in post-process.
+	total := len(s.chunks) * len(s.enabledScanners)
+	e.prog().Stage("scanners", total)
+	s.outputs, s.dagErrs = s.dag.Run(ctx, agentPar)
 	e.prog().Done("scanners")
-	for name, err := range dagErrs {
+	for name, err := range s.dagErrs {
 		e.logf("dag node %s: %v", name, err)
 	}
+	return nil
+}
 
-	// 9) Collect final findings + post-processing.
+func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	e.prog().Stage("post-process", 0)
-	final := pickFinalFindings(outputs, &report)
-	final = append(final, prefilterFindings...)
-	e.applySuppressions(final, suppressions)
+	final := pickFinalFindings(s.outputs, s.report)
+	final = append(final, s.prefilterFindings...)
+	e.applySuppressions(final, s.suppressions)
 	if e.Cfg.Precision.Reachability {
-		idx := reach.Build(astList, graph.CallersByFile())
-		if reachableFiles != nil {
-			idx.SetCallGraphReachable(reachableFiles)
+		idx := reach.Build(s.astList, s.graph.CallersByFile())
+		if s.reachableFiles != nil {
+			idx.SetCallGraphReachable(s.reachableFiles)
 		}
 		if down := idx.Apply(final); down > 0 {
 			e.logf("reachability: downgraded %d findings", down)
 		}
 	}
-	attachTraces(final, taintTraces)
-	attachInterProc(final, interProcPaths)
-	// Optional sub-agent deep pass runs BEFORE dropByPolicy so that findings
-	// the deep agent refutes are filtered out via the standard FP path.
-	final = e.runDeepPass(ctx, target, cdb, final)
-	// Resolve final Confidence from all collected signals (scanner, verifier,
-	// deep, taint, secrets, reach). This must run AFTER deep so that confirmed
-	// hotspots are not stuck at the value reach.Apply forced earlier.
+	attachTraces(final, s.taintTraces)
+	attachInterProc(final, s.interProcPaths)
+	final = e.runDeepPass(ctx, s.target, s.cacheDB, final)
 	if n := applyConfidence(final); n > 0 {
 		e.logf("confidence: updated %d findings", n)
 	}
 	if n := e.applyCalibration(final); n > 0 {
 		e.logf("calibration: remapped %d scores", n)
 	}
-	final = e.dropByPolicy(final, &report)
-	final = e.applyBaseline(cdb, final)
+	final = e.dropByPolicy(final, s.report)
+	final = e.applyBaseline(s.cacheDB, final)
 	e.prog().Done("post-process")
 
 	for _, f := range final {
-		report.Stats.BySeverity[string(f.Severity)]++
-		report.Stats.ByAgent[f.Agent]++
+		s.report.Stats.BySeverity[string(f.Severity)]++
+		s.report.Stats.ByAgent[f.Agent]++
 	}
 	types.SortFindings(final)
-	report.Findings = final
-	report.FinishedAt = time.Now()
-	return report, nil
+	s.report.Findings = final
+	s.final = final
+	return nil
 }
 
 func (e *Engine) discoverFiles(target string) ([]types.FileTarget, error) {
@@ -272,7 +360,7 @@ func (e *Engine) discoverFiles(target string) ([]types.FileTarget, error) {
 	}}, nil
 }
 
-func (e *Engine) openCacheDB() *cache.DB {
+func (e *Engine) openCacheDB() cache.Cache {
 	if !e.Cfg.Cache.Enabled {
 		return nil
 	}
@@ -403,7 +491,7 @@ func (e *Engine) dropByPolicy(final []types.Finding, report *types.Report) []typ
 	return kept
 }
 
-func (e *Engine) applyBaseline(cdb *cache.DB, final []types.Finding) []types.Finding {
+func (e *Engine) applyBaseline(cdb cache.Cache, final []types.Finding) []types.Finding {
 	if cdb == nil || e.Cfg.Baseline.Path == "" {
 		return final
 	}

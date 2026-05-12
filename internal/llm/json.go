@@ -32,7 +32,7 @@ func CompleteJSON(ctx context.Context, c Client, req Request, retries int) (Resp
 				jerr)},
 		)
 	}
-	return Response{}, nil, fmt.Errorf("llm: invalid JSON after %d retries: %w", retries, lastErr)
+	return Response{}, nil, fmt.Errorf("llm: invalid JSON after %d retries (%v): %w", retries, lastErr, ErrInvalidJSON)
 }
 
 // ExtractJSON pulls a JSON object out of a possibly noisy LLM response (handles markdown fences).

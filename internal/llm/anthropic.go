@@ -368,6 +368,9 @@ func (c *anthropicClient) postMessages(ctx context.Context, body any) ([]byte, e
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if sentinel := classifyHTTP(resp.StatusCode); sentinel != nil {
+			return nil, fmt.Errorf("anthropic http %d: %s: %w", resp.StatusCode, string(raw), sentinel)
+		}
 		return nil, fmt.Errorf("anthropic http %d: %s", resp.StatusCode, string(raw))
 	}
 	return raw, nil

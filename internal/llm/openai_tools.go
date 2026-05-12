@@ -285,6 +285,9 @@ func (c *openAIClient) doChatRound(
 		return "", nil, 0, 0, herr
 	}
 	if status >= 300 {
+		if sentinel := classifyHTTP(status); sentinel != nil {
+			return "", nil, 0, 0, fmt.Errorf("%s http %d: %s: %w", c.label, status, string(raw), sentinel)
+		}
 		return "", nil, 0, 0, fmt.Errorf("%s http %d: %s", c.label, status, string(raw))
 	}
 	var resp oaChatToolResponse
@@ -396,6 +399,9 @@ func (c *openAIClient) doResponsesRound(
 		return "", nil, 0, 0, true, nil
 	}
 	if status >= 300 {
+		if sentinel := classifyHTTP(status); sentinel != nil {
+			return "", nil, 0, 0, false, fmt.Errorf("%s http %d: %s: %w", c.label, status, string(raw), sentinel)
+		}
 		return "", nil, 0, 0, false, fmt.Errorf("%s http %d: %s", c.label, status, string(raw))
 	}
 	var resp oaResponsesResponse

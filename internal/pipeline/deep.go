@@ -23,7 +23,7 @@ import (
 // so a single failed hotspot never aborts the whole scan.
 //
 //nolint:gocyclo // sequential pipeline stages; restructure would obscure flow
-func (e *Engine) runDeepPass(ctx context.Context, target string, cdb *cache.DB, findings []types.Finding) []types.Finding {
+func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache, findings []types.Finding) []types.Finding {
 	cfg := e.Cfg.Deep
 	if !cfg.Enabled || len(findings) == 0 {
 		return findings

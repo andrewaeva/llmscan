@@ -127,6 +127,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 			mu.Unlock()
 
 			n := atomic.AddInt64(&done, 1)
+			e.prog().Inc("scanners", 1)
 			if e.Verbose && total >= 20 && (n%25 == 0 || n == int64(total)) {
 				e.logf("scan:%s progress %d/%d (%.0fs)", name, n, total, time.Since(start).Seconds())
 			}

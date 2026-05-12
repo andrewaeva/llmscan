@@ -211,3 +211,49 @@ func TestConfidenceConstants(t *testing.T) {
 		t.Errorf("confidence constants drifted: %q %q %q", ConfHigh, ConfMedium, ConfLow)
 	}
 }
+
+func TestValidate_DefaultsAreValid(t *testing.T) {
+	if err := Default().Validate(); err != nil {
+		t.Fatalf("Default() must validate: %v", err)
+	}
+}
+
+func TestValidate_VoteKExceedsVoteN(t *testing.T) {
+	cfg := Default()
+	cfg.Precision.VoteN = 3
+	cfg.Precision.VoteK = 5
+	if err := cfg.Validate(); err == nil {
+		t.Error("want error when VoteK > VoteN")
+	}
+}
+
+func TestValidate_MinScoreOutOfRange(t *testing.T) {
+	cfg := Default()
+	cfg.Precision.MinScore = 1.5
+	if err := cfg.Validate(); err == nil {
+		t.Error("want error when MinScore > 1")
+	}
+	cfg.Precision.MinScore = -0.1
+	if err := cfg.Validate(); err == nil {
+		t.Error("want error when MinScore < 0")
+	}
+}
+
+func TestValidate_NegativeCounters(t *testing.T) {
+	cfg := Default()
+	cfg.Precision.SymExpandHops = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("want error on negative SymExpandHops")
+	}
+}
+
+func TestLoad_RejectsInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/bad.yaml"
+	if err := os.WriteFile(p, []byte("precision:\n  vote_n: 2\n  vote_k: 9\n  min_score: 0.5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Error("Load should reject invalid config")
+	}
+}

@@ -1,6 +1,7 @@
 package calibration
 
 import (
+	"errors"
 	"math"
 	"math/rand"
 	"os"
@@ -178,5 +179,69 @@ func TestKnotsSortedByX(t *testing.T) {
 	}
 	if !sort.Float64sAreSorted(xs) {
 		t.Errorf("knots must be sorted by X, got %v", xs)
+	}
+}
+
+func TestSaveStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/m.json"
+	m := Fit([]Sample{{0.1, false}, {0.9, true}})
+	m.Schema = 0 // pretend caller didn't set it
+	if err := Save(path, m); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Schema != SchemaVersion {
+		t.Errorf("got schema=%d, want %d", got.Schema, SchemaVersion)
+	}
+}
+
+func TestLoadLegacyZeroSchema(t *testing.T) {
+	// Legacy files written before SchemaVersion was introduced have no
+	// "schema" field; encoding/json leaves it at zero. Load must accept
+	// them and treat them as v1.
+	dir := t.TempDir()
+	path := dir + "/legacy.json"
+	legacy := `{"method":"isotonic-pav","created_at":"2025-01-01T00:00:00Z",
+		"n_samples":2,"knots":[{"x":0.1,"y":0.0},{"x":0.9,"y":1.0}]}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load legacy: %v", err)
+	}
+	if m.Schema != 1 {
+		t.Errorf("legacy schema: got %d, want 1", m.Schema)
+	}
+	if got := m.Apply(0.5); got <= 0 || got >= 1 {
+		t.Errorf("Apply still works on legacy: got %v", got)
+	}
+}
+
+func TestLoadRejectsNewerSchema(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/future.json"
+	future := `{"schema":999,"method":"isotonic-pav","created_at":"2025-01-01T00:00:00Z","n_samples":0,"knots":[]}`
+	if err := os.WriteFile(path, []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for future schema")
+	}
+	if !errors.Is(err, ErrSchemaTooNew) {
+		t.Errorf("got %v, want ErrSchemaTooNew", err)
+	}
+}
+
+func TestSaveNilModel(t *testing.T) {
+	dir := t.TempDir()
+	err := Save(dir+"/nil.json", nil)
+	if err == nil {
+		t.Fatal("expected error for nil model")
 	}
 }

@@ -185,6 +185,9 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if sentinel := classifyHTTP(resp.StatusCode); sentinel != nil {
+			return Response{}, fmt.Errorf("%s http %d: %s: %w", c.label, resp.StatusCode, string(raw), sentinel)
+		}
 		return Response{}, fmt.Errorf("%s http %d: %s", c.label, resp.StatusCode, string(raw))
 	}
 	var out oaResponse
@@ -195,11 +198,11 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 		return Response{}, errors.New(c.label + ": " + out.Error.Message)
 	}
 	if len(out.Choices) == 0 {
-		return Response{}, errors.New(c.label + ": empty choices")
+		return Response{}, fmt.Errorf("%s: empty choices: %w", c.label, ErrEmptyResponse)
 	}
 	if out.Choices[0].Message.Content == "" && out.Choices[0].FinishReason == "length" {
-		return Response{}, fmt.Errorf("%s: empty content (finish_reason=length); model spent all %d tokens on reasoning, increase agent max_tokens in config",
-			c.label, out.Usage.CompletionTokens)
+		return Response{}, fmt.Errorf("%s: empty content (finish_reason=length); model spent all %d tokens on reasoning, increase agent max_tokens in config: %w",
+			c.label, out.Usage.CompletionTokens, ErrEmptyResponse)
 	}
 	provider := c.label
 	if provider == "" {

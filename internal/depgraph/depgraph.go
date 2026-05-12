@@ -46,9 +46,13 @@ func New(root string, files []*ast.FileAST) *Graph {
 		out:   map[string][]string{},
 		in:    map[string][]string{},
 	}
-	// Index files: relpath -> *FileAST.
+	// Index files: relpath -> *FileAST. Skip nil entries — callers may pass
+	// a parsed slice that contains nil for files whose parse failed.
 	byRel := map[string]*ast.FileAST{}
 	for _, f := range files {
+		if f == nil {
+			continue
+		}
 		rel := relTo(root, f.Path)
 		byRel[rel] = f
 		g.Nodes[rel] = &Node{ID: rel, IsFile: true, Language: string(f.Language), Path: f.Path}

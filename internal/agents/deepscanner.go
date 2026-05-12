@@ -41,7 +41,7 @@ type DeepResult struct {
 type DeepAgent struct {
 	Client    llm.ToolClient
 	Sandbox   *tools.Sandbox
-	Cache     *cache.DB // optional; if non-nil, tool outputs are memoized
+	Cache     cache.Cache // optional; if non-nil, tool outputs are memoized
 	UseCache  bool
 	Budget    int  // max tool calls; 0 -> default
 	Verbose   bool // log every tool call
