@@ -390,17 +390,17 @@ func TestOneLineTruncates(t *testing.T) {
 	}
 }
 
-func TestSevRank(t *testing.T) {
-	if sevRank(types.SevCritical) <= sevRank(types.SevHigh) {
+func TestSeverityRank(t *testing.T) {
+	if types.SeverityRank(types.SevCritical) <= types.SeverityRank(types.SevHigh) {
 		t.Error("rank ordering")
 	}
-	if sevRank(types.SevHigh) <= sevRank(types.SevMedium) {
+	if types.SeverityRank(types.SevHigh) <= types.SeverityRank(types.SevMedium) {
 		t.Error("rank ordering")
 	}
-	if sevRank(types.SevInfo) <= 0 {
+	if types.SeverityRank(types.SevInfo) <= 0 {
 		t.Error("info rank >0")
 	}
-	if sevRank(types.Severity("garbage")) != 0 {
+	if types.SeverityRank(types.Severity("garbage")) != 0 {
 		t.Error("unknown rank = 0")
 	}
 }

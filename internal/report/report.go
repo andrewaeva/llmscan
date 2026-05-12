@@ -65,17 +65,7 @@ func WriteTextWith(w io.Writer, r types.Report, mode ColorMode) error {
 	}
 
 	sorted := append([]types.Finding(nil), r.Findings...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		si := sevRank(sorted[i].Severity)
-		sj := sevRank(sorted[j].Severity)
-		if si != sj {
-			return si > sj
-		}
-		if sorted[i].File != sorted[j].File {
-			return sorted[i].File < sorted[j].File
-		}
-		return sorted[i].StartLine < sorted[j].StartLine
-	})
+	types.SortFindings(sorted)
 
 	fmt.Fprintf(w, "\n%s\n", p.bold(fmt.Sprintf("findings (%d):", len(sorted))))
 	if len(sorted) == 0 {
@@ -222,22 +212,6 @@ func oneLine(s string) string {
 		s = s[:240] + "..."
 	}
 	return s
-}
-
-func sevRank(s types.Severity) int {
-	switch s {
-	case types.SevCritical:
-		return 5
-	case types.SevHigh:
-		return 4
-	case types.SevMedium:
-		return 3
-	case types.SevLow:
-		return 2
-	case types.SevInfo:
-		return 1
-	}
-	return 0
 }
 
 // ---------- SARIF ----------

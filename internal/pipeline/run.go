@@ -205,6 +205,7 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		report.Stats.BySeverity[string(f.Severity)]++
 		report.Stats.ByAgent[f.Agent]++
 	}
+	types.SortFindings(final)
 	report.Findings = final
 	report.FinishedAt = time.Now()
 	return report, nil
