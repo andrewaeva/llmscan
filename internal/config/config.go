@@ -396,73 +396,100 @@ func Load(path string) (Config, error) {
 // might intentionally override at the CLI; only invariants that would cause
 // silent misbehaviour deep inside the pipeline.
 func (c Config) Validate() error {
+	for _, validate := range []func(Config) error{
+		validatePrecision,
+		validateDeep,
+		validateLLM,
+		validateChunk,
+		validateContext,
+	} {
+		if err := validate(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePrecision(c Config) error {
 	p := c.Precision
-	if p.VoteN < 0 {
+	switch {
+	case p.VoteN < 0:
 		return fmt.Errorf("precision.vote_n=%d must be >= 0", p.VoteN)
-	}
-	if p.VoteK < 0 {
+	case p.VoteK < 0:
 		return fmt.Errorf("precision.vote_k=%d must be >= 0", p.VoteK)
-	}
-	if p.VoteN > 0 && p.VoteK > p.VoteN {
+	case p.VoteN > 0 && p.VoteK > p.VoteN:
 		return fmt.Errorf("precision.vote_k=%d cannot exceed vote_n=%d", p.VoteK, p.VoteN)
-	}
-	if p.MinScore < 0 || p.MinScore > 1 {
+	case p.MinScore < 0 || p.MinScore > 1:
 		return fmt.Errorf("precision.min_score=%v must be in [0,1]", p.MinScore)
-	}
-	if p.InterProcMaxDepth < 0 {
+	case p.InterProcMaxDepth < 0:
 		return fmt.Errorf("precision.interproc_max_depth=%d must be >= 0", p.InterProcMaxDepth)
-	}
-	if p.JSONRetries < 0 {
+	case p.JSONRetries < 0:
 		return fmt.Errorf("precision.json_retries=%d must be >= 0", p.JSONRetries)
+	default:
+		return nil
 	}
+}
+
+func validateDeep(c Config) error {
 	if c.Deep.MaxHotspots < 0 || c.Deep.Budget < 0 || c.Deep.Concurrency < 0 {
 		return fmt.Errorf("deep.* counters must be >= 0")
 	}
-	if c.LLM.InflightLimit < 0 {
+	return nil
+}
+
+func validateLLM(c Config) error {
+	switch {
+	case c.LLM.InflightLimit < 0:
 		return fmt.Errorf("llm.inflight_limit=%d must be >= 0", c.LLM.InflightLimit)
-	}
-	if c.LLM.MaxRetries < 0 {
+	case c.LLM.MaxRetries < 0:
 		return fmt.Errorf("llm.max_retries=%d must be >= 0", c.LLM.MaxRetries)
-	}
-	if c.LLM.RetryBaseDelayMS < 0 || c.LLM.RetryMaxDelayMS < 0 {
+	case c.LLM.RetryBaseDelayMS < 0 || c.LLM.RetryMaxDelayMS < 0:
 		return fmt.Errorf("llm.retry_*_ms must be >= 0")
-	}
-	if c.LLM.RetryBaseDelayMS > 0 && c.LLM.RetryMaxDelayMS > 0 && c.LLM.RetryMaxDelayMS < c.LLM.RetryBaseDelayMS {
+	case c.LLM.RetryBaseDelayMS > 0 && c.LLM.RetryMaxDelayMS > 0 && c.LLM.RetryMaxDelayMS < c.LLM.RetryBaseDelayMS:
 		return fmt.Errorf("llm.retry_max_delay_ms=%d must be >= retry_base_delay_ms=%d",
 			c.LLM.RetryMaxDelayMS, c.LLM.RetryBaseDelayMS)
+	default:
+		return nil
 	}
+}
+
+func validateChunk(c Config) error {
 	cc := c.Scan.Chunk
-	if cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens {
+	switch {
+	case cc.TargetTokens > 0 && cc.MaxTokens > 0 && cc.MaxTokens < cc.TargetTokens:
 		return fmt.Errorf("scan.chunk.max_tokens=%d must be >= target_tokens=%d",
 			cc.MaxTokens, cc.TargetTokens)
-	}
-	if cc.MinTokens < 0 || cc.TargetTokens < 0 || cc.MaxTokens < 0 {
+	case cc.MinTokens < 0 || cc.TargetTokens < 0 || cc.MaxTokens < 0:
 		return fmt.Errorf("scan.chunk.* token counters must be >= 0")
+	default:
+		return nil
 	}
+}
+
+func validateContext(c Config) error {
 	ctx := c.Scan.Context
-	if ctx.OverflowRatio < 0 || ctx.OverflowRatio > 1 {
+	switch {
+	case ctx.OverflowRatio < 0 || ctx.OverflowRatio > 1:
 		return fmt.Errorf("scan.context.overflow_ratio=%v must be in [0,1]", ctx.OverflowRatio)
-	}
-	if ctx.BudgetTokens < 0 {
+	case ctx.BudgetTokens < 0:
 		return fmt.Errorf("scan.context.budget_tokens=%d must be >= 0", ctx.BudgetTokens)
-	}
-	if ctx.CalleesHops < 0 || ctx.CallersHops < 0 {
+	case ctx.CalleesHops < 0 || ctx.CallersHops < 0:
 		return fmt.Errorf("scan.context.*_hops must be >= 0")
 	}
 	switch strings.ToLower(ctx.Level) {
 	case "", "minimal", "balanced", "aggressive", "extreme":
+		return nil
 	default:
 		return fmt.Errorf("scan.context.level=%q must be one of minimal|balanced|aggressive|extreme", ctx.Level)
 	}
-	return nil
 }
 
 // AutoContextBudget resolves the effective contextpack budget for the given
 // agent. Precedence:
 //
-//	1. scan.context.budget_tokens if non-zero, capped at 0.7 × ContextWindow.
-//	2. 0.7 × model.context_window if window is set.
-//	3. Level default (40K minimal, 80K balanced/aggressive, 120K extreme).
+//  1. scan.context.budget_tokens if non-zero, capped at 0.7 × ContextWindow.
+//  2. 0.7 × model.context_window if window is set.
+//  3. Level default (40K minimal, 80K balanced/aggressive, 120K extreme).
 func (c Config) AutoContextBudget(agent string) int {
 	model := c.ResolveModel(agent)
 	cap0 := 0

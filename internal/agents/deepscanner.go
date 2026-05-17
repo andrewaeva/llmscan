@@ -168,101 +168,142 @@ func (a *DeepAgent) Verify(ctx context.Context, f types.Finding) DeepResult {
 // at the sandbox layer.
 func (a *DeepAgent) dispatch(ctx context.Context, call llm.ToolCall) (string, error) {
 	_ = ctx
-	// Memoize if cache is configured.
-	var key string
-	if a.UseCache && a.Cache != nil {
-		h := sha256.Sum256([]byte(call.Name + "|" + string(call.Input) + "|" + a.Sandbox.Root))
-		key = hex.EncodeToString(h[:])
-		if blob, ok := a.Cache.GetDeepTool(key); ok {
-			return string(blob), nil
-		}
+	key, cached := a.deepToolCacheKey(call)
+	if cached != "" {
+		return cached, nil
 	}
 
-	var (
-		out string
-		err error
-	)
-	switch call.Name {
-	case "read_file":
-		var args struct {
-			Path      string `json:"path"`
-			StartLine int    `json:"start_line"`
-			EndLine   int    `json:"end_line"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.ReadFile(args.Path, args.StartLine, args.EndLine)
-	case "grep":
-		var args struct {
-			Pattern    string `json:"pattern"`
-			PathGlob   string `json:"path_glob"`
-			MaxMatches int    `json:"max_matches"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.Grep(args.Pattern, args.PathGlob, args.MaxMatches)
-	case "list_dir":
-		var args struct {
-			Path string `json:"path"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.ListDir(args.Path)
-	case "blame", "git_blame":
-		var args struct {
-			Path string `json:"path"`
-			Line int    `json:"line"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.Blame(args.Path, args.Line)
-	case "read_symbol":
-		var args struct {
-			Path string `json:"path"`
-			Name string `json:"name"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.ReadSymbol(args.Path, args.Name)
-	case "find_callers":
-		var args struct {
-			Name     string `json:"name"`
-			MaxHits  int    `json:"max_hits"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.FindCallers(args.Name, args.MaxHits)
-	case "find_callees":
-		var args struct {
-			Name    string `json:"name"`
-			MaxHits int    `json:"max_hits"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.FindCallees(args.Name, args.MaxHits)
-	case "list_imports":
-		var args struct {
-			Path string `json:"path"`
-		}
-		if e := json.Unmarshal(call.Input, &args); e != nil {
-			return "", fmt.Errorf("bad args: %w", e)
-		}
-		out, err = a.Sandbox.ListImports(args.Path)
-	default:
+	handler, ok := deepToolHandlers[call.Name]
+	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
 
+	out, err := handler(a, call.Input)
 	if err == nil && key != "" {
 		_ = a.Cache.PutDeepTool(key, []byte(out))
 	}
 	return out, err
+}
+
+type deepToolHandler func(*DeepAgent, []byte) (string, error)
+
+var deepToolHandlers = map[string]deepToolHandler{
+	"read_file":    dispatchReadFile,
+	"grep":         dispatchGrep,
+	"list_dir":     dispatchListDir,
+	"blame":        dispatchBlame,
+	"git_blame":    dispatchBlame,
+	"read_symbol":  dispatchReadSymbol,
+	"find_callers": dispatchFindCallers,
+	"find_callees": dispatchFindCallees,
+	"list_imports": dispatchListImports,
+}
+
+func (a *DeepAgent) deepToolCacheKey(call llm.ToolCall) (string, string) {
+	if !a.UseCache || a.Cache == nil {
+		return "", ""
+	}
+	h := sha256.Sum256([]byte(call.Name + "|" + string(call.Input) + "|" + a.Sandbox.Root))
+	key := hex.EncodeToString(h[:])
+	if blob, ok := a.Cache.GetDeepTool(key); ok {
+		return key, string(blob)
+	}
+	return key, ""
+}
+
+func dispatchReadFile(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.ReadFile(args.Path, args.StartLine, args.EndLine)
+}
+
+func dispatchGrep(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Pattern    string `json:"pattern"`
+		PathGlob   string `json:"path_glob"`
+		MaxMatches int    `json:"max_matches"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.Grep(args.Pattern, args.PathGlob, args.MaxMatches)
+}
+
+func dispatchListDir(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.ListDir(args.Path)
+}
+
+func dispatchBlame(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+		Line int    `json:"line"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.Blame(args.Path, args.Line)
+}
+
+func dispatchReadSymbol(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.ReadSymbol(args.Path, args.Name)
+}
+
+func dispatchFindCallers(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Name    string `json:"name"`
+		MaxHits int    `json:"max_hits"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.FindCallers(args.Name, args.MaxHits)
+}
+
+func dispatchFindCallees(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Name    string `json:"name"`
+		MaxHits int    `json:"max_hits"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.FindCallees(args.Name, args.MaxHits)
+}
+
+func dispatchListImports(a *DeepAgent, input []byte) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := unmarshalDeepToolArgs(input, &args); err != nil {
+		return "", err
+	}
+	return a.Sandbox.ListImports(args.Path)
+}
+
+func unmarshalDeepToolArgs(input []byte, dst any) error {
+	if err := json.Unmarshal(input, dst); err != nil {
+		return fmt.Errorf("bad args: %w", err)
+	}
+	return nil
 }
 
 // ---- prompts & tool schemas ----

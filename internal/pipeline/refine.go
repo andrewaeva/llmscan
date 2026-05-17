@@ -8,6 +8,12 @@ import (
 	"github.com/andrewaeva/llmscan/internal/types"
 )
 
+type refineGroup struct {
+	idx     []int
+	split   bool
+	entries []types.Finding
+}
+
 // runRefinePass groups findings by file and, for files that produced >=
 // RefineThreshold chunks (i.e. were split by the adaptive chunker), invokes
 // the Refiner to consolidate duplicates / boilerplate across chunks. On any
@@ -18,79 +24,100 @@ func (e *Engine) runRefinePass(ctx context.Context, findings []types.Finding, ch
 		return findings
 	}
 
-	// Count chunks per file: only split files are interesting.
+	groups := buildRefineGroups(findings, chunks, threshold)
+	if !hasRefinableGroups(groups) {
+		return findings
+	}
+
+	refiner, ok := e.newRefiner()
+	if !ok {
+		return findings
+	}
+
+	out := make([]types.Finding, 0, len(findings))
+	processed := make(map[string]struct{}, len(groups))
+	for i, f := range findings {
+		if _, done := processed[f.File]; done {
+			continue
+		}
+		out = e.appendRefineGroup(ctx, out, processed, groups, refiner, i, f)
+	}
+	return out
+}
+
+func buildRefineGroups(findings []types.Finding, chunks []types.FileTarget, threshold int) map[string]*refineGroup {
 	chunksByFile := make(map[string]int, len(chunks))
 	for _, c := range chunks {
 		chunksByFile[c.Path]++
 	}
 
-	// Group findings by file, preserving order.
-	type group struct {
-		idx     []int
-		split   bool
-		entries []types.Finding
-	}
-	groups := make(map[string]*group)
+	groups := make(map[string]*refineGroup)
 	for i, f := range findings {
 		g := groups[f.File]
 		if g == nil {
-			g = &group{split: chunksByFile[f.File] >= threshold}
+			g = &refineGroup{split: chunksByFile[f.File] >= threshold}
 			groups[f.File] = g
 		}
 		g.idx = append(g.idx, i)
 		g.entries = append(g.entries, f)
 	}
+	return groups
+}
 
-	// Anything to do?
-	var any bool
+func hasRefinableGroups(groups map[string]*refineGroup) bool {
 	for _, g := range groups {
-		if g.split && len(g.entries) >= 2 {
-			any = true
-			break
+		if shouldRefineGroup(g) {
+			return true
 		}
 	}
-	if !any {
-		return findings
-	}
+	return false
+}
 
+func shouldRefineGroup(g *refineGroup) bool {
+	return g != nil && g.split && len(g.entries) >= 2
+}
+
+func (e *Engine) newRefiner() (*agents.Refiner, bool) {
 	cl, err := llm.New(e.Cfg.ResolveModel("verifier"))
 	if err != nil {
 		e.logf("refine: verifier client unavailable: %v (skipping)", err)
-		return findings
+		return nil, false
 	}
-	refiner := &agents.Refiner{
+	return &agents.Refiner{
 		Client:      cl,
 		MaxFindings: e.Cfg.Precision.RefineMaxFindings,
 		Verbose:     e.Verbose,
 		Logf:        e.logf,
+	}, true
+}
+
+func (e *Engine) appendRefineGroup(
+	ctx context.Context,
+	out []types.Finding,
+	processed map[string]struct{},
+	groups map[string]*refineGroup,
+	refiner *agents.Refiner,
+	i int,
+	f types.Finding,
+) []types.Finding {
+	g := groups[f.File]
+	if !shouldRefineGroup(g) {
+		return appendPassThroughGroup(out, processed, g, i, f.File)
 	}
 
-	out := make([]types.Finding, 0, len(findings))
-	processed := make(map[string]struct{}, len(groups))
-
-	// Walk the original slice to preserve order for files we don't touch.
-	for i, f := range findings {
-		if _, done := processed[f.File]; done {
-			continue
-		}
-		g := groups[f.File]
-		if g == nil || !g.split || len(g.entries) < 2 {
-			// Pass-through: emit this finding only when we reach its
-			// original position.
-			if g != nil && g.idx[0] == i {
-				out = append(out, g.entries...)
-				processed[f.File] = struct{}{}
-			}
-			continue
-		}
-		// Refine this group.
-		refined, rerr := refiner.Refine(ctx, f.File, g.entries)
-		if rerr != nil {
-			e.logf("refine[%s]: %v (keeping originals)", f.File, rerr)
-			refined = g.entries
-		}
-		out = append(out, refined...)
-		processed[f.File] = struct{}{}
+	refined, err := refiner.Refine(ctx, f.File, g.entries)
+	if err != nil {
+		e.logf("refine[%s]: %v (keeping originals)", f.File, err)
+		refined = g.entries
 	}
-	return out
+	processed[f.File] = struct{}{}
+	return append(out, refined...)
+}
+
+func appendPassThroughGroup(out []types.Finding, processed map[string]struct{}, g *refineGroup, i int, file string) []types.Finding {
+	if g == nil || g.idx[0] != i {
+		return out
+	}
+	processed[file] = struct{}{}
+	return append(out, g.entries...)
 }

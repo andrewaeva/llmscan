@@ -89,15 +89,10 @@ func scanCmd() *cobra.Command {
 }
 
 func runScan(target string, f *scanFlags) error {
-	if _, err := os.Stat(target); err != nil {
-		return fmt.Errorf("target not accessible: %w", err)
-	}
-	cfg, err := config.Load(f.cfgPath)
+	cfg, err := loadScanConfig(target, f)
 	if err != nil {
 		return err
 	}
-	applyFlagOverrides(&cfg, f)
-	configureLLMTransport(cfg)
 	if f.showCallGraph {
 		return runShowCallGraph(target, cfg)
 	}
@@ -105,15 +100,53 @@ func runScan(target string, f *scanFlags) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	eng := pipeline.New(cfg)
-	eng.Verbose = f.verbose
-
-	// Progress UI (TUI on TTY, plain lines in CI/pipes).
-	pmode, err := progress.ParseMode(f.progressMode)
+	eng, reporter, err := newScanEngine(cfg, f)
 	if err != nil {
 		return err
 	}
-	if f.noTUI && pmode != progress.ModeNone {
+	rep, err := runScanPipeline(ctx, eng, reporter, target)
+	if err != nil {
+		return err
+	}
+	if err := writeScanOutputs(target, rep, f); err != nil {
+		return err
+	}
+	handleFailOnThreshold(rep, f.failOn, cancel)
+	return nil
+}
+
+func loadScanConfig(target string, f *scanFlags) (config.Config, error) {
+	if _, err := os.Stat(target); err != nil {
+		return config.Config{}, fmt.Errorf("target not accessible: %w", err)
+	}
+	cfg, err := config.Load(f.cfgPath)
+	if err != nil {
+		return config.Config{}, err
+	}
+	applyFlagOverrides(&cfg, f)
+	configureLLMTransport(cfg)
+	return cfg, nil
+}
+
+func newScanEngine(cfg config.Config, f *scanFlags) (*pipeline.Engine, progress.Reporter, error) {
+	eng := pipeline.New(cfg)
+	eng.Verbose = f.verbose
+
+	reporter, err := newScanReporter(f.progressMode, f.noTUI)
+	if err != nil {
+		return nil, nil, err
+	}
+	eng.SetProgress(reporter)
+	wireTUILogger(eng, reporter)
+	return eng, reporter, nil
+}
+
+func newScanReporter(progressMode string, noTUI bool) (progress.Reporter, error) {
+	pmode, err := progress.ParseMode(progressMode)
+	if err != nil {
+		return nil, err
+	}
+	if noTUI && pmode != progress.ModeNone {
 		pmode = progress.ModePlain
 	}
 	// Treat stderr OR stdout being non-TTY as "no TUI": stderr is where the
@@ -121,8 +154,10 @@ func runScan(target string, f *scanFlags) error {
 	// final report would race the TUI's cursor-up sequences. Plain output is
 	// safe in both cases.
 	isTTY := progress.IsTerminal(os.Stderr) && progress.IsTerminal(os.Stdout)
-	reporter := progress.NewAuto(pmode, os.Stderr, isTTY)
-	eng.SetProgress(reporter)
+	return progress.NewAuto(pmode, os.Stderr, isTTY), nil
+}
+
+func wireTUILogger(eng *pipeline.Engine, reporter progress.Reporter) {
 	// Route the engine's plain `[llmscan] …` logger through the TUI's
 	// coordinated writer when one is active. Without this, log.Printf to
 	// stderr interleaves with the TUI's `\x1b[1A\x1b[2K` cursor-up sequences
@@ -132,29 +167,21 @@ func runScan(target string, f *scanFlags) error {
 	if tui, ok := reporter.(*progress.TUIReporter); ok && eng.Logger != nil {
 		eng.Logger.SetOutput(tui.Writer())
 	}
+}
 
+func runScanPipeline(ctx context.Context, eng *pipeline.Engine, reporter progress.Reporter, target string) (types.Report, error) {
 	rep, err := eng.Run(ctx, target)
 	// Stop the reporter BEFORE printing the final report so the TUI clears
 	// its painted region first. Doing this in a deferred call would let the
 	// TUI's cursor-up sequences (lastLines clear) eat the top of the report.
 	reporter.Stop()
-	if err != nil {
+	return rep, err
+}
+
+func writeScanOutputs(target string, rep types.Report, f *scanFlags) error {
+	if err := writePrimaryReport(rep, f.outPath, f.format, f.color); err != nil {
 		return err
 	}
-
-	out, closeOut, err := openOutput(f.outPath)
-	if err != nil {
-		return err
-	}
-
-	if err := writeReport(out, rep, f.format, f.color); err != nil {
-		_ = closeOut()
-		return err
-	}
-	if cerr := closeOut(); cerr != nil {
-		return cerr
-	}
-
 	// Always persist a copy of the report under <target>/.llmscan/ so the user
 	// has a reliable fallback if the terminal scroll-back is clobbered.
 	if err := writePersistedReports(target, rep, f.reportFile); err != nil {
@@ -162,12 +189,27 @@ func runScan(target string, f *scanFlags) error {
 		// the scan over an unwritable directory.
 		fmt.Fprintf(os.Stderr, "[llmscan] report: persist failed: %v\n", err)
 	}
-
-	if f.failOn != "" && shouldFail(rep, f.failOn) {
-		cancel()
-		os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
-	}
 	return nil
+}
+
+func writePrimaryReport(rep types.Report, outPath, format, color string) error {
+	out, closeOut, err := openOutput(outPath)
+	if err != nil {
+		return err
+	}
+	if err := writeReport(out, rep, format, color); err != nil {
+		_ = closeOut()
+		return err
+	}
+	return closeOut()
+}
+
+func handleFailOnThreshold(rep types.Report, threshold string, cancel context.CancelFunc) {
+	if threshold == "" || !shouldFail(rep, threshold) {
+		return
+	}
+	cancel()
+	os.Exit(2) //nolint:gocritic // process is exiting; remaining defers (signal ctx cancel) are released above
 }
 
 // configureLLMTransport installs the process-wide LLM transport policy
