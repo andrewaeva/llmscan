@@ -71,6 +71,71 @@ func TestDebateGraph_AppliesFPVerdict(t *testing.T) {
 	}
 }
 
+func TestCollectDeepHotspotsFiltersAndEscalatesInconclusive(t *testing.T) {
+	findings := []types.Finding{
+		{ID: "drop-supp", Severity: types.SevCritical, Suppressed: true},
+		{ID: "drop-fp", Severity: types.SevCritical, FalsePositive: true},
+		{ID: "keep-threshold", Severity: types.SevHigh, File: "b.go", StartLine: 10},
+		{ID: "escalate-inconclusive", Severity: types.SevLow, VerifierVerdict: "inconclusive", File: "a.go", StartLine: 3},
+		{ID: "drop-low", Severity: types.SevLow, File: "z.go", StartLine: 1},
+	}
+	hotspots := collectDeepHotspots(findings, "high")
+	if len(hotspots) != 2 {
+		t.Fatalf("hotspots=%+v", hotspots)
+	}
+	if hotspots[0].index != 2 || hotspots[0].finding.ID != "keep-threshold" {
+		t.Fatalf("first hotspot=%+v", hotspots[0])
+	}
+	if hotspots[1].index != 3 || hotspots[1].finding.ID != "escalate-inconclusive" {
+		t.Fatalf("second hotspot=%+v", hotspots[1])
+	}
+}
+
+func TestApplyDeepResultRefutedSetsFPReason(t *testing.T) {
+	f := types.Finding{
+		ID:       "x",
+		Severity: types.SevHigh,
+	}
+	res := agents.DeepResult{
+		Verdict: "refuted",
+		Reason:  "validated upstream",
+		Model:   "m",
+	}
+	applyDeepResult(&f, res)
+
+	if !f.DeepVerified || f.DeepVerdict != "refuted" {
+		t.Fatalf("deep metadata not set: %+v", f)
+	}
+	if !f.FalsePositive {
+		t.Fatal("expected FalsePositive=true")
+	}
+	if !strings.Contains(f.FPReason, "deep agent refuted: validated upstream") {
+		t.Fatalf("unexpected FPReason=%q", f.FPReason)
+	}
+}
+
+func TestApplyDeepResultDefenseInDepthDowngradesSeverityAndKeepsInfo(t *testing.T) {
+	fLow := types.Finding{ID: "low", Severity: types.SevHigh}
+	applyDeepResult(&fLow, agents.DeepResult{Verdict: "confirmed", DefenseInDepth: true})
+	if !fLow.DefenseInDepth || fLow.Severity != types.SevLow {
+		t.Fatalf("expected sev low downgrade, got %+v", fLow)
+	}
+
+	fInfo := types.Finding{ID: "info", Severity: types.SevInfo}
+	applyDeepResult(&fInfo, agents.DeepResult{Verdict: "confirmed", DefenseInDepth: true})
+	if fInfo.Severity != types.SevInfo {
+		t.Fatalf("info should stay info, got %+v", fInfo)
+	}
+}
+
+func TestApplyDeepResultSuggestedFixOnlyWhenMissing(t *testing.T) {
+	f := types.Finding{ID: "x", SuggestedFix: "existing"}
+	applyDeepResult(&f, agents.DeepResult{Fix: "new fix"})
+	if f.SuggestedFix != "existing" {
+		t.Fatalf("suggested fix should be preserved, got %q", f.SuggestedFix)
+	}
+}
+
 // --- test helpers ---
 
 type stubDebater struct {

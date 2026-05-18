@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/andrewaeva/llmscan/internal/agents"
+	"github.com/andrewaeva/llmscan/internal/contextpack"
 	"github.com/andrewaeva/llmscan/internal/fewshot"
 	"github.com/andrewaeva/llmscan/internal/llm"
 	"github.com/andrewaeva/llmscan/internal/rag"
@@ -46,15 +47,9 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 	if sc.fewshotBanks != nil {
 		bank = sc.fewshotBanks.Bank(name)
 	}
-	topK := e.Cfg.Precision.FewShotTopK
-	if topK <= 0 {
-		topK = 3
-	}
+	topK := effectiveFewShotTopK(e.Cfg.Precision.FewShotTopK)
 
-	conc := e.Cfg.Scan.Concurrency
-	if conc <= 0 {
-		conc = 8
-	}
+	conc := scannerConcurrency(e.Cfg.Scan.Concurrency)
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -70,17 +65,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			extra := ""
-			if sc.packsByChunkKey != nil {
-				if p, ok := sc.packsByChunkKey[chunkPackKey(c)]; ok && p != nil {
-					extra = p.Render()
-				}
-			}
-			if bank != nil {
-				if ex := bank.Retrieve(c.Content, topK, c.Language); len(ex) > 0 {
-					extra += fewshot.RenderPrompt(ex)
-				}
-			}
+			extra := buildChunkExtraContext(c, sc.packsByChunkKey, bank, topK)
 
 			fnds := e.scanOneChunk(ctx, scanner, reflex, c, extra)
 			if fnds != nil {
@@ -91,7 +76,7 @@ func (e *Engine) runScanner(ctx context.Context, name string, client llm.Client,
 
 			n := atomic.AddInt64(&done, 1)
 			e.prog().Inc("scanners", 1)
-			if e.Verbose && total >= 20 && (n%25 == 0 || n == int64(total)) {
+			if shouldLogScannerProgress(e.Verbose, total, n) {
 				e.logf("scan:%s progress %d/%d (%.0fs)", name, n, total, time.Since(start).Seconds())
 			}
 		}(c)
@@ -107,10 +92,7 @@ func (e *Engine) verifyAll(ctx context.Context, v *agents.Verifier, findings []t
 	if v == nil || v.Client == nil {
 		return findings
 	}
-	conc := e.Cfg.Scan.Concurrency
-	if conc <= 0 {
-		conc = 4
-	}
+	conc := verifierConcurrency(e.Cfg.Scan.Concurrency)
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	out := make([]types.Finding, len(findings))
@@ -176,16 +158,7 @@ func (e *Engine) planVerifyAll(ctx context.Context, pv *agents.PlanVerifier, fin
 	if pv == nil {
 		return findings
 	}
-	conc := e.Cfg.Scan.Concurrency
-	if conc <= 0 {
-		conc = 4
-	}
-	// Plan-execute spawns 1 planner call + a tool-loop per finding, so cap
-	// the concurrency at 4 even when the user picks a higher number to avoid
-	// hammering rate limits.
-	if conc > 4 {
-		conc = 4
-	}
+	conc := planVerifierConcurrency(e.Cfg.Scan.Concurrency)
 	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	out := make([]types.Finding, len(findings))
@@ -207,6 +180,61 @@ func (e *Engine) planVerifyAll(ctx context.Context, pv *agents.PlanVerifier, fin
 	}
 	wg.Wait()
 	return out
+}
+
+func effectiveFewShotTopK(topK int) int {
+	if topK <= 0 {
+		return 3
+	}
+	return topK
+}
+
+func scannerConcurrency(conc int) int {
+	if conc <= 0 {
+		return 8
+	}
+	return conc
+}
+
+func verifierConcurrency(conc int) int {
+	if conc <= 0 {
+		return 4
+	}
+	return conc
+}
+
+func planVerifierConcurrency(conc int) int {
+	conc = verifierConcurrency(conc)
+	// Plan-execute spawns 1 planner call + a tool-loop per finding, so cap
+	// concurrency at 4 to avoid hammering rate limits.
+	if conc > 4 {
+		return 4
+	}
+	return conc
+}
+
+func shouldLogScannerProgress(verbose bool, total int, done int64) bool {
+	return verbose && total >= 20 && (done%25 == 0 || done == int64(total))
+}
+
+func buildChunkExtraContext(
+	chunk types.FileTarget,
+	packsByChunkKey map[string]*contextpack.Pack,
+	bank *fewshot.Bank,
+	topK int,
+) string {
+	extra := ""
+	if packsByChunkKey != nil {
+		if p, ok := packsByChunkKey[chunkPackKey(chunk)]; ok && p != nil {
+			extra = p.Render()
+		}
+	}
+	if bank != nil {
+		if ex := bank.Retrieve(chunk.Content, topK, chunk.Language); len(ex) > 0 {
+			extra += fewshot.RenderPrompt(ex)
+		}
+	}
+	return extra
 }
 
 // snippetWithLines returns content lines [start-pad, end+pad] formatted with line numbers.

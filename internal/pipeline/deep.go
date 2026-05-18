@@ -15,6 +15,11 @@ import (
 	"github.com/andrewaeva/llmscan/internal/vcs"
 )
 
+type deepHotspot struct {
+	index   int
+	finding types.Finding
+}
+
 // runDeepPass runs the optional sub-agent verification pass over high-severity
 // findings. It mutates `findings` in place, attaching DeepVerified/Verdict/
 // Comment/Trace, and returns the same slice for chaining.
@@ -70,36 +75,17 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 
 	// 3) Pick hotspots from final findings: severity >= threshold, not FP, not
 	//    suppressed. Sort by severity (worst first), then file:line, cap.
-	//
-	// fp-check escalation rule: even when severity is below the threshold,
-	// escalate findings the standard verifier flagged "inconclusive" so the
-	// deep path can resolve them.
-	threshold := severityRank(cfg.MinSeverity)
-	type idxF struct {
-		i int
-		f types.Finding
-	}
-	var hotspots []idxF
-	for i, f := range findings {
-		if f.Suppressed || f.FalsePositive {
-			continue
-		}
-		inconclusive := isInconclusive(f)
-		if severityRank(string(f.Severity)) < threshold && !inconclusive {
-			continue
-		}
-		hotspots = append(hotspots, idxF{i: i, f: f})
-	}
+	hotspots := collectDeepHotspots(findings, cfg.MinSeverity)
 	sort.SliceStable(hotspots, func(a, b int) bool {
-		ra := severityRank(string(hotspots[a].f.Severity))
-		rb := severityRank(string(hotspots[b].f.Severity))
+		ra := severityRank(string(hotspots[a].finding.Severity))
+		rb := severityRank(string(hotspots[b].finding.Severity))
 		if ra != rb {
 			return ra > rb
 		}
-		if hotspots[a].f.File != hotspots[b].f.File {
-			return hotspots[a].f.File < hotspots[b].f.File
+		if hotspots[a].finding.File != hotspots[b].finding.File {
+			return hotspots[a].finding.File < hotspots[b].finding.File
 		}
-		return hotspots[a].f.StartLine < hotspots[b].f.StartLine
+		return hotspots[a].finding.StartLine < hotspots[b].finding.StartLine
 	})
 	maxH := cfg.MaxHotspots
 	if maxH <= 0 {
@@ -123,14 +109,15 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 
 	// 4) Fan out.
 	agent := &agents.DeepAgent{
-		Client:         tc,
-		Sandbox:        sandbox,
-		Cache:          cdb,
-		UseCache:       cfg.Cache,
-		Budget:         deepBudget(cfg),
-		Verbose:        e.Verbose,
-		Logf:           e.logf,
-		ModelName:      spec.Model,
+		Client:    tc,
+		Sandbox:   sandbox,
+		Cache:     cdb,
+		UseCache:  cfg.Cache,
+		Budget:    deepBudget(cfg),
+		Verbose:   e.Verbose,
+		Logf:      e.logf,
+		ModelName: spec.Model,
+		// Skill override is resolved once per pass.
 		PromptOverride: e.loadSpecialSkill("_fpcheck-deep"),
 	}
 
@@ -147,38 +134,11 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 			defer func() { <-sem }()
 
 			t0 := time.Now()
-			res := agent.Verify(ctx, hs.f)
+			res := agent.Verify(ctx, hs.finding)
 			e.logf("deep[%d] %s:%d -> %s (%dms, %d tool calls)",
-				hs.i, hs.f.File, hs.f.StartLine, res.Verdict,
+				hs.index, hs.finding.File, hs.finding.StartLine, res.Verdict,
 				time.Since(t0).Milliseconds(), len(res.Trace))
-
-			findings[hs.i].DeepVerified = true
-			findings[hs.i].DeepVerdict = res.Verdict
-			findings[hs.i].DeepComment = res.Reason
-			findings[hs.i].DeepModel = res.Model
-			findings[hs.i].DeepTrace = res.Trace
-			// Merge the deep agent's six-gate review (if any). ApplyGates
-			// keeps existing gate state on a no-op and otherwise mutates
-			// FalsePositive / Severity / DefenseInDepth consistently with
-			// the standard verifier.
-			if res.Gates != nil {
-				_ = types.ApplyGates(&findings[hs.i], res.Gates)
-			}
-			if res.Verdict == "refuted" {
-				findings[hs.i].FalsePositive = true
-				if findings[hs.i].FPReason == "" {
-					findings[hs.i].FPReason = "deep agent refuted: " + res.Reason
-				}
-			}
-			if res.DefenseInDepth {
-				findings[hs.i].DefenseInDepth = true
-				if findings[hs.i].Severity != types.SevInfo {
-					findings[hs.i].Severity = types.SevLow
-				}
-			}
-			if res.Fix != "" && findings[hs.i].SuggestedFix == "" {
-				findings[hs.i].SuggestedFix = res.Fix
-			}
+			applyDeepResult(&findings[hs.index], res)
 		}()
 	}
 	wg.Wait()
@@ -191,7 +151,7 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 	if cfg.Debate {
 		indices := make([]int, 0, len(hotspots))
 		for _, h := range hotspots {
-			indices = append(indices, h.i)
+			indices = append(indices, h.index)
 		}
 		e.runDebatePass(ctx, rawClient, findings, indices)
 	}
@@ -205,9 +165,9 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 // Per-finding routing is expressed as a small LangGraph-style state machine
 // (internal/agents.Graph). The nodes are:
 //
-//   gate    -> filter (suppressed / FP / refuted -> End)
-//   debate  -> call Debater.Debate, store result in state
-//   apply   -> mutate the underlying finding based on the verdict
+//	gate    -> filter (suppressed / FP / refuted -> End)
+//	debate  -> call Debater.Debate, store result in state
+//	apply   -> mutate the underlying finding based on the verdict
 //
 // The router on "gate" picks debate or End; the router on "debate" always
 // flows into apply -> End. This is small enough that a switch would also
@@ -225,7 +185,7 @@ func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []ty
 		ProponentTemp: 0.3,
 		OpponentTemp:  0.6,
 		Verbose:       e.Verbose,
-		Logf:           e.logf,
+		Logf:          e.logf,
 	}
 	g := buildDebateGraph(deb, e.logf)
 	start := time.Now()
@@ -313,6 +273,54 @@ func appendUniqueTag(tags []string, v string) []string {
 		}
 	}
 	return append(tags, v)
+}
+
+func collectDeepHotspots(findings []types.Finding, minSeverity string) []deepHotspot {
+	// fp-check escalation rule: even when severity is below the threshold,
+	// escalate findings the standard verifier flagged inconclusive so the
+	// deep path can resolve them.
+	threshold := severityRank(minSeverity)
+	hotspots := make([]deepHotspot, 0, len(findings))
+	for i, f := range findings {
+		if f.Suppressed || f.FalsePositive {
+			continue
+		}
+		if severityRank(string(f.Severity)) < threshold && !isInconclusive(f) {
+			continue
+		}
+		hotspots = append(hotspots, deepHotspot{index: i, finding: f})
+	}
+	return hotspots
+}
+
+func applyDeepResult(f *types.Finding, res agents.DeepResult) {
+	f.DeepVerified = true
+	f.DeepVerdict = res.Verdict
+	f.DeepComment = res.Reason
+	f.DeepModel = res.Model
+	f.DeepTrace = res.Trace
+
+	// Merge the deep agent's six-gate review (if any). ApplyGates keeps
+	// existing gate state on a no-op and otherwise mutates FalsePositive /
+	// Severity / DefenseInDepth consistently with the standard verifier.
+	if res.Gates != nil {
+		_ = types.ApplyGates(f, res.Gates)
+	}
+	if res.Verdict == "refuted" {
+		f.FalsePositive = true
+		if f.FPReason == "" {
+			f.FPReason = "deep agent refuted: " + res.Reason
+		}
+	}
+	if res.DefenseInDepth {
+		f.DefenseInDepth = true
+		if f.Severity != types.SevInfo {
+			f.Severity = types.SevLow
+		}
+	}
+	if res.Fix != "" && f.SuggestedFix == "" {
+		f.SuggestedFix = res.Fix
+	}
 }
 
 func deepBudget(cfg config.DeepConfig) int {
