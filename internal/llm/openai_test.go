@@ -106,6 +106,22 @@ func TestOpenAICompleteJSONSchema(t *testing.T) {
 	}
 }
 
+func TestOpenAICompleteJSONSchemaDefaultsName(t *testing.T) {
+	var gotReq oaRequest
+	_, c := newOpenAITestServer(t, func(r *http.Request, body []byte) (int, string) {
+		_ = json.Unmarshal(body, &gotReq)
+		return 200, `{"choices":[{"message":{"content":"{}"}}]}`
+	})
+	schema := map[string]any{"type": "object"}
+	if _, err := c.Complete(context.Background(), Request{JSON: true, Schema: schema}); err != nil {
+		t.Fatal(err)
+	}
+	js, _ := gotReq.ResponseFormat["json_schema"].(map[string]any)
+	if js["name"] != "response" {
+		t.Errorf("name=%v", js["name"])
+	}
+}
+
 func TestOpenAITemperatureOverride(t *testing.T) {
 	var gotReq oaRequest
 	_, c := newOpenAITestServer(t, func(r *http.Request, body []byte) (int, string) {
@@ -150,6 +166,26 @@ func TestOpenAIReasoningModelOmitsTemperatureAndUsesMaxCompletionTokens(t *testi
 			wantMin := 8000
 			if gotReq.MaxCompletionTokens < wantMin {
 				t.Errorf("max_completion_tokens=%d want >= %d for reasoning model %s", gotReq.MaxCompletionTokens, wantMin, model)
+			}
+		})
+	}
+}
+
+func TestReasoningCompletionBudget(t *testing.T) {
+	tests := []struct {
+		name      string
+		maxTokens int
+		want      int
+	}{
+		{name: "zero floors to minimum", maxTokens: 0, want: 8000},
+		{name: "small budget multiplies then floors", maxTokens: 1234, want: 8000},
+		{name: "mid budget multiplies by four", maxTokens: 4000, want: 16000},
+		{name: "larger budget stays unchanged", maxTokens: 20000, want: 20000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reasoningCompletionBudget(tc.maxTokens); got != tc.want {
+				t.Fatalf("reasoningCompletionBudget(%d)=%d want %d", tc.maxTokens, got, tc.want)
 			}
 		})
 	}

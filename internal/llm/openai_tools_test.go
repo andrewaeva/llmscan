@@ -84,6 +84,106 @@ func newOpenAIToolClient(t *testing.T, srv *httptest.Server, model string) *open
 	return c
 }
 
+func TestNewOpenAIToolLoopSeedsTransports(t *testing.T) {
+	override := 0.9
+	c := &openAIClient{spec: config.ModelSpec{
+		Model:       "gpt-5.5",
+		Temperature: 0.2,
+	}}
+	loop := newOpenAIToolLoop(c, ToolRequest{
+		System: "sys",
+		Messages: []Message{
+			{Role: "user", Content: "question"},
+			{Role: "assistant", Content: "context"},
+			{Role: "", Content: "skip"},
+		},
+		Tools:               []ToolDef{{Name: "read_file"}},
+		TemperatureOverride: &override,
+	})
+
+	if !loop.useResponses || !loop.reasoning {
+		t.Fatalf("expected reasoning responses loop, got %+v", loop)
+	}
+	if loop.temp != override {
+		t.Fatalf("temp=%v want %v", loop.temp, override)
+	}
+	if len(loop.tools) != 1 || loop.tools[0].Name != "read_file" {
+		t.Fatalf("tools=%+v", loop.tools)
+	}
+	if len(loop.chatMsgs) != 3 {
+		t.Fatalf("chatMsgs=%+v", loop.chatMsgs)
+	}
+	if loop.chatMsgs[0].Role != "system" || loop.chatMsgs[0].Content != "sys" {
+		t.Fatalf("system chat msg=%+v", loop.chatMsgs[0])
+	}
+	if len(loop.respInput) != 2 {
+		t.Fatalf("respInput=%+v", loop.respInput)
+	}
+	if loop.respInput[0].Role != "user" || loop.respInput[1].Role != "assistant" {
+		t.Fatalf("respInput roles=%+v", loop.respInput)
+	}
+}
+
+func TestOpenAIToolLoopExecuteToolCallsBackfillsIDAndPrefixesTranscriptErrors(t *testing.T) {
+	loop := openAIToolLoop{}
+	calls := []ToolCall{{ID: "call_1", Name: "grep"}}
+	loop.executeToolCalls(context.Background(), func(ctx context.Context, call ToolCall) ToolResult {
+		return ToolResult{Content: "boom", IsError: true}
+	}, calls)
+
+	if len(loop.steps) != 1 {
+		t.Fatalf("steps=%+v", loop.steps)
+	}
+	if loop.steps[0].Result.ID != "call_1" {
+		t.Fatalf("result id=%q", loop.steps[0].Result.ID)
+	}
+	if loop.steps[0].Result.Content != "boom" {
+		t.Fatalf("step content=%q", loop.steps[0].Result.Content)
+	}
+	if len(loop.chatMsgs) != 1 {
+		t.Fatalf("chatMsgs=%+v", loop.chatMsgs)
+	}
+	if got := loop.chatMsgs[0]; got.Role != "tool" || got.ToolCallID != "call_1" || got.Content != "error: boom" {
+		t.Fatalf("tool msg=%+v", got)
+	}
+}
+
+func TestParseChatToolCallsDefaultsEmptyArguments(t *testing.T) {
+	calls := parseChatToolCalls(oaToolMessage{
+		ToolCalls: []oaToolCall{{
+			ID:   "call_1",
+			Type: "function",
+			Function: oaToolCallFn{
+				Name: "read_file",
+			},
+		}},
+	})
+
+	if len(calls) != 1 {
+		t.Fatalf("calls=%+v", calls)
+	}
+	if string(calls[0].Input) != "{}" {
+		t.Fatalf("input=%q", string(calls[0].Input))
+	}
+}
+
+func TestParseResponsesRoundFallsBackToOutputText(t *testing.T) {
+	text, calls := parseResponsesRound(oaResponsesResponse{
+		OutputText: "fallback text",
+		Output: []oaResponsesOutputItem{
+			{Type: "message", Role: "assistant"},
+			{Type: "function_call", CallID: "call_1", Name: "grep"},
+		},
+	})
+
+	if text != "fallback text" {
+		t.Fatalf("text=%q", text)
+	}
+	if len(calls) != 1 || calls[0].ID != "call_1" || string(calls[0].Input) != "{}" {
+		t.Fatalf("calls=%+v", calls)
+	}
+}
+
 // ---------------- Responses API ----------------
 
 func TestOpenAIToolsResponsesAPILoop(t *testing.T) {

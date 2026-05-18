@@ -103,6 +103,7 @@ func modelUsesMaxCompletionTokens(model string) bool {
 	}
 	return false
 }
+
 type oaResponse struct {
 	Choices []struct {
 		Message      oaMessage `json:"message"`
@@ -118,6 +119,27 @@ type oaResponse struct {
 }
 
 func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, error) {
+	body := c.buildChatCompletionRequest(req)
+	raw, err := c.postChatCompletion(ctx, body)
+	if err != nil {
+		return Response{}, err
+	}
+	return c.parseChatCompletionResponse(raw)
+}
+
+func (c *openAIClient) buildChatCompletionRequest(req Request) oaRequest {
+	body := oaRequest{
+		Model:    c.spec.Model,
+		Messages: buildOpenAIMessages(req),
+	}
+	reasoning := modelUsesMaxCompletionTokens(c.spec.Model)
+	c.applyCompletionBudget(&body, reasoning)
+	c.applyTemperature(&body, req, reasoning)
+	body.ResponseFormat = buildOpenAIResponseFormat(req)
+	return body
+}
+
+func buildOpenAIMessages(req Request) []oaMessage {
 	msgs := make([]oaMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, oaMessage{Role: "system", Content: req.System})
@@ -125,75 +147,107 @@ func (c *openAIClient) Complete(ctx context.Context, req Request) (Response, err
 	for _, m := range req.Messages {
 		msgs = append(msgs, oaMessage(m))
 	}
-	body := oaRequest{
-		Model:    c.spec.Model,
-		Messages: msgs,
-	}
-	reasoning := modelUsesMaxCompletionTokens(c.spec.Model)
+	return msgs
+}
+
+func (c *openAIClient) applyCompletionBudget(body *oaRequest, reasoning bool) {
 	if reasoning {
-		// Reasoning models (GPT-5/o1/o3/o4) consume a significant portion of
-		// their token budget on hidden reasoning tokens before emitting any
-		// content. A budget of <8000 frequently yields empty responses.
-		// Bump the effective ceiling so the visible content has room to land.
-		budget := c.spec.MaxTokens
-		if budget < 16000 {
-			budget *= 4
-		}
-		if budget < 8000 {
-			budget = 8000
-		}
-		body.MaxCompletionTokens = budget
-	} else {
-		body.MaxTokens = c.spec.MaxTokens
+		body.MaxCompletionTokens = reasoningCompletionBudget(c.spec.MaxTokens)
+		return
 	}
-	// GPT-5 / o1 / o3 / o4 reasoning models only accept the default temperature (1)
-	// and reject any explicit value. Omit the field for those models.
-	if !reasoning {
-		temp := c.spec.Temperature
-		if req.TemperatureOverride != nil {
-			temp = *req.TemperatureOverride
-		}
-		body.Temperature = &temp
+	body.MaxTokens = c.spec.MaxTokens
+}
+
+func reasoningCompletionBudget(maxTokens int) int {
+	// Reasoning models (GPT-5/o1/o3/o4) consume a significant portion of
+	// their token budget on hidden reasoning tokens before emitting any
+	// content. A budget of <8000 frequently yields empty responses.
+	// Bump the effective ceiling so the visible content has room to land.
+	budget := maxTokens
+	if budget < 16000 {
+		budget *= 4
 	}
-	if req.JSON {
-		if req.Schema != nil {
-			name := req.SchemaName
-			if name == "" {
-				name = "response"
-			}
-			body.ResponseFormat = map[string]any{
-				"type": "json_schema",
-				"json_schema": map[string]any{
-					"name":   name,
-					"schema": req.Schema,
-					"strict": true,
-				},
-			}
-		} else {
-			body.ResponseFormat = map[string]any{"type": "json_object"}
-		}
+	if budget < 8000 {
+		budget = 8000
 	}
+	return budget
+}
+
+func (c *openAIClient) applyTemperature(body *oaRequest, req Request, reasoning bool) {
+	// GPT-5 / o1 / o3 / o4 reasoning models only accept the default
+	// temperature (1) and reject any explicit value. Omit the field there.
+	if reasoning {
+		return
+	}
+	temp := c.spec.Temperature
+	if req.TemperatureOverride != nil {
+		temp = *req.TemperatureOverride
+	}
+	body.Temperature = &temp
+}
+
+func buildOpenAIResponseFormat(req Request) map[string]any {
+	if !req.JSON {
+		return nil
+	}
+	if req.Schema == nil {
+		return map[string]any{"type": "json_object"}
+	}
+	name := req.SchemaName
+	if name == "" {
+		name = "response"
+	}
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   name,
+			"schema": req.Schema,
+			"strict": true,
+		},
+	}
+}
+
+func (c *openAIClient) postChatCompletion(ctx context.Context, body oaRequest) ([]byte, error) {
 	buf, _ := json.Marshal(body)
 	res, err := doHTTP(ctx, c.http, c.label, func(ctx context.Context) (*http.Request, error) {
-		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(buf))
-		if rerr != nil {
-			return nil, rerr
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		return req, nil
+		return c.newChatCompletionRequest(ctx, buf)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return res.body, nil
+}
+
+func (c *openAIClient) newChatCompletionRequest(ctx context.Context, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	return req, nil
+}
+
+func (c *openAIClient) parseChatCompletionResponse(raw []byte) (Response, error) {
+	out, err := decodeOpenAIResponse(c.label, raw)
 	if err != nil {
 		return Response{}, err
 	}
-	raw := res.body
+	return c.responseFromOpenAI(out)
+}
+
+func decodeOpenAIResponse(label string, raw []byte) (oaResponse, error) {
 	var out oaResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return Response{}, fmt.Errorf("%s decode: %w; body=%s", c.label, err, string(raw))
+		return oaResponse{}, fmt.Errorf("%s decode: %w; body=%s", label, err, string(raw))
 	}
 	if out.Error != nil {
-		return Response{}, errors.New(c.label + ": " + out.Error.Message)
+		return oaResponse{}, errors.New(label + ": " + out.Error.Message)
 	}
+	return out, nil
+}
+
+func (c *openAIClient) responseFromOpenAI(out oaResponse) (Response, error) {
 	if len(out.Choices) == 0 {
 		return Response{}, fmt.Errorf("%s: empty choices: %w", c.label, ErrEmptyResponse)
 	}

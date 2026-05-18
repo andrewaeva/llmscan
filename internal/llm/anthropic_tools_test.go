@@ -48,6 +48,92 @@ func scriptedServer(t *testing.T, responses []string, bodies *[][]byte) (*httpte
 	return srv, c
 }
 
+func TestValidateAnthropicToolRequestDefaultsMaxSteps(t *testing.T) {
+	req := ToolRequest{
+		Handler: func(ctx context.Context, call ToolCall) ToolResult { return ToolResult{} },
+	}
+	if err := validateAnthropicToolRequest(&req); err != nil {
+		t.Fatalf("validateAnthropicToolRequest: %v", err)
+	}
+	if req.MaxSteps != 20 {
+		t.Fatalf("MaxSteps=%d want 20", req.MaxSteps)
+	}
+}
+
+func TestNewAnthropicToolLoopSeedsMessagesAndTools(t *testing.T) {
+	c := &anthropicClient{spec: config.ModelSpec{
+		Model:       "claude-test",
+		Temperature: 0.3,
+	}}
+	override := 0.8
+	loop := newAnthropicToolLoop(c, ToolRequest{
+		System: "sys",
+		Messages: []Message{
+			{Role: "system", Content: "skip"},
+			{Role: "user", Content: "u"},
+			{Role: "assistant", Content: "a"},
+		},
+		Tools:               []ToolDef{{Name: "read_file"}},
+		TemperatureOverride: &override,
+	})
+	if loop.system != "sys" {
+		t.Fatalf("system=%q", loop.system)
+	}
+	if loop.temp != override {
+		t.Fatalf("temp=%v want %v", loop.temp, override)
+	}
+	if len(loop.tools) != 1 || loop.tools[0].Name != "read_file" {
+		t.Fatalf("tools=%+v", loop.tools)
+	}
+	if len(loop.messages) != 2 {
+		t.Fatalf("messages=%+v", loop.messages)
+	}
+	if loop.messages[0].Role != "user" || loop.messages[1].Role != "assistant" {
+		t.Fatalf("message roles=%+v", loop.messages)
+	}
+}
+
+func TestAntToolLoopCollectToolResults(t *testing.T) {
+	loop := &antToolLoop{}
+	content := []antToolBlock{
+		{Type: "text", Text: "prefix "},
+		{Type: "tool_use", ID: "c1", Name: "grep", Input: json.RawMessage(`{"p":"x"}`)},
+		{Type: "text", Text: "suffix"},
+	}
+	toolResults, text, hasToolUse := loop.collectToolResults(context.Background(), func(ctx context.Context, call ToolCall) ToolResult {
+		if call.ID != "c1" || call.Name != "grep" {
+			t.Fatalf("unexpected call: %+v", call)
+		}
+		return ToolResult{ID: "c1", Content: "out"}
+	}, content)
+	if !hasToolUse {
+		t.Fatal("expected hasToolUse=true")
+	}
+	if text != "prefix suffix" {
+		t.Fatalf("text=%q", text)
+	}
+	if len(loop.steps) != 1 || loop.steps[0].Call.ID != "c1" {
+		t.Fatalf("steps=%+v", loop.steps)
+	}
+	if len(toolResults) != 1 || toolResults[0].Type != "tool_result" || toolResults[0].ToolUseID != "c1" {
+		t.Fatalf("tool results=%+v", toolResults)
+	}
+}
+
+func TestAntToolLoopProcessAssistantBlocksFinalizesWithoutTools(t *testing.T) {
+	loop := &antToolLoop{}
+	done := loop.processAssistantBlocks(context.Background(), func(context.Context, ToolCall) ToolResult {
+		t.Fatal("handler should not be called")
+		return ToolResult{}
+	}, []antToolBlock{{Type: "text", Text: "final"}})
+	if !done {
+		t.Fatal("expected done=true")
+	}
+	if loop.finalText != "final" {
+		t.Fatalf("finalText=%q", loop.finalText)
+	}
+}
+
 func TestCompleteWithToolsLoop(t *testing.T) {
 	// Round 1: model wants to call read_file and grep.
 	round1 := `{

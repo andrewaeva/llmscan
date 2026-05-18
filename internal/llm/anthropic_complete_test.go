@@ -128,6 +128,51 @@ func TestAnthropicCompleteTemperatureOverride(t *testing.T) {
 	}
 }
 
+func TestBuildCompleteSystemPromptJSONAndSchema(t *testing.T) {
+	got := buildCompleteSystemPrompt(Request{
+		System: "base prompt",
+		JSON:   true,
+		Schema: map[string]any{"type": "object"},
+	})
+	if !strings.Contains(got, "base prompt") {
+		t.Fatalf("system prompt lost base text: %q", got)
+	}
+	if !strings.Contains(got, "respond with a single JSON object") {
+		t.Fatalf("missing json directive: %q", got)
+	}
+	if !strings.Contains(got, "Must conform to schema") {
+		t.Fatalf("missing schema directive: %q", got)
+	}
+}
+
+func TestBuildCompleteMessagesSkipsSystem(t *testing.T) {
+	msgs := buildCompleteMessages([]Message{
+		{Role: "system", Content: "ignored"},
+		{Role: "user", Content: "u"},
+		{Role: "assistant", Content: "a"},
+	})
+	if len(msgs) != 2 {
+		t.Fatalf("messages=%+v", msgs)
+	}
+	if msgs[0].Role != "user" || msgs[0].Content[0].Text != "u" {
+		t.Fatalf("first message=%+v", msgs[0])
+	}
+	if msgs[1].Role != "assistant" || msgs[1].Content[0].Text != "a" {
+		t.Fatalf("second message=%+v", msgs[1])
+	}
+}
+
+func TestExtractAnthropicTextIgnoresNonTextBlocks(t *testing.T) {
+	got := extractAnthropicText([]antContentBlock{
+		{Type: "text", Text: "hello"},
+		{Type: "tool_use", Text: "ignored"},
+		{Type: "text", Text: " world"},
+	})
+	if got != "hello world" {
+		t.Fatalf("text=%q", got)
+	}
+}
+
 func TestAnthropicCompleteHTTPError(t *testing.T) {
 	_, c := newAnthropicTestServer(t, func(r *http.Request, body []byte) (int, string) {
 		return 500, `boom`
