@@ -128,16 +128,10 @@ func (e *Engine) loadSpecialSkill(dirName string) string {
 // range may carry an explicit "git:" / "arc:" prefix to force a backend.
 func (e *Engine) applyDiffFilter(ctx context.Context, files []types.FileTarget, target string) []types.FileTarget {
 	rangeSpec, forced := vcs.SplitRange(e.Cfg.Diff.Range)
-	// An explicit --vcs flag overrides auto-detection.
+	// An explicit --vcs flag overrides auto-detection when the diff range did
+	// not already force a backend via prefix.
 	if forced == vcs.KindNone {
-		switch e.Cfg.Scan.VCS {
-		case "git":
-			forced = vcs.KindGit
-		case "arc":
-			forced = vcs.KindArc
-		case "none":
-			forced = vcs.KindNone
-		}
+		forced = configuredVCSKind(e.Cfg.Scan.VCS)
 	}
 	var (
 		v   vcs.VCS
@@ -168,17 +162,7 @@ func (e *Engine) applyDiffFilter(ctx context.Context, files []types.FileTarget, 
 		e.logf("diff (%s): %v", v.Kind(), err)
 		return files
 	}
-	set := map[string]bool{}
-	for _, p := range changed {
-		set[p] = true
-	}
-	var out []types.FileTarget
-	for _, f := range files {
-		if set[f.Path] {
-			out = append(out, f)
-		}
-	}
-	return out
+	return filterFilesByPath(files, changedPathSet(changed))
 }
 
 // applyWatchlistPreFilter drops files unlikely to contain taint sources/sinks.
@@ -247,21 +231,7 @@ func (e *Engine) planStep(ctx context.Context, target string, files []types.File
 	// Augment plan: prepend top fan-in files so high-blast-radius modules get scanned first.
 	topByFanIn := g.TopRankedByFanIn()
 	if len(topByFanIn) > 0 {
-		seen := map[string]bool{}
-		merged := make([]string, 0, len(plan.Priority)+len(topByFanIn))
-		for _, p := range topByFanIn[:min(15, len(topByFanIn))] {
-			if !seen[p] {
-				merged = append(merged, p)
-				seen[p] = true
-			}
-		}
-		for _, p := range plan.Priority {
-			if !seen[p] {
-				merged = append(merged, p)
-				seen[p] = true
-			}
-		}
-		plan.Priority = merged
+		plan.Priority = mergePriorityWithTopFanIn(plan.Priority, topByFanIn, 15)
 	}
 	return plan, nil
 }
@@ -323,4 +293,52 @@ func (e *Engine) skillUsesReflexion(name string) bool {
 		}
 	}
 	return false
+}
+
+func configuredVCSKind(vcsName string) vcs.Kind {
+	switch vcsName {
+	case "git":
+		return vcs.KindGit
+	case "arc":
+		return vcs.KindArc
+	default:
+		return vcs.KindNone
+	}
+}
+
+func changedPathSet(paths []string) map[string]bool {
+	set := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		set[p] = true
+	}
+	return set
+}
+
+func filterFilesByPath(files []types.FileTarget, keep map[string]bool) []types.FileTarget {
+	out := make([]types.FileTarget, 0, len(files))
+	for _, f := range files {
+		if keep[f.Path] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func mergePriorityWithTopFanIn(priority, topByFanIn []string, maxTop int) []string {
+	limit := min(maxTop, len(topByFanIn))
+	seen := map[string]bool{}
+	merged := make([]string, 0, len(priority)+limit)
+	for _, p := range topByFanIn[:limit] {
+		if !seen[p] {
+			merged = append(merged, p)
+			seen[p] = true
+		}
+	}
+	for _, p := range priority {
+		if !seen[p] {
+			merged = append(merged, p)
+			seen[p] = true
+		}
+	}
+	return merged
 }
