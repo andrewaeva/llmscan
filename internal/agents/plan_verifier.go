@@ -139,65 +139,72 @@ Each step must be one sentence and reference a tool when possible
 // (same toolbox, same gate output schema) and merges the verdict onto the
 // finding.
 func (p *PlanVerifier) executePlan(ctx context.Context, f types.Finding, contextSnippet string, plan []string) (types.Finding, error) {
-	system := p.ExecutorPromptOverride
-	if system == "" {
-		system = planVerifierExecutorSystem
-	}
-	budget := p.Budget
-	if budget <= 0 {
-		budget = 30
-	}
-
+	system, budget := p.executorConfig()
 	user := planExecutorUserPrompt(f, contextSnippet, plan)
 
 	var trace []types.DeepToolCall
+	resp, err := p.runExecutor(ctx, system, user, budget, &trace)
+	if err != nil {
+		return f, err
+	}
+	return p.applyExecutorVerdict(f, resp), nil
+}
+
+func (p *PlanVerifier) executorConfig() (system string, budget int) {
+	system = p.ExecutorPromptOverride
+	if system == "" {
+		system = planVerifierExecutorSystem
+	}
+	budget = p.Budget
+	if budget <= 0 {
+		budget = 30
+	}
+	return system, budget
+}
+
+func (p *PlanVerifier) runExecutor(ctx context.Context, system, user string, budget int, trace *[]types.DeepToolCall) (llm.ToolResponse, error) {
+	return p.Executor.CompleteWithTools(ctx, llm.ToolRequest{
+		System:   system,
+		Messages: []llm.Message{{Role: "user", Content: user}},
+		Tools:    deepToolDefs(),
+		Handler:  p.makeToolHandler(trace),
+		MaxSteps: budget,
+	})
+}
+
+func (p *PlanVerifier) makeToolHandler(trace *[]types.DeepToolCall) llm.ToolHandler {
 	step := 0
 	// Reuse the same dispatcher as DeepAgent — same tools, same arg shapes.
 	// We construct a thin shim DeepAgent purely for dispatch.
 	shim := &DeepAgent{Sandbox: p.Sandbox}
-	handler := func(ctx context.Context, call llm.ToolCall) llm.ToolResult {
+	return func(ctx context.Context, call llm.ToolCall) llm.ToolResult {
 		step++
 		t0 := time.Now()
 		out, ferr := shim.dispatch(ctx, call)
-		elapsed := time.Since(t0).Milliseconds()
-
-		args := compactJSON(call.Input)
-		if len(args) > 200 {
-			args = args[:200] + "..."
-		}
-		result := out
-		if len(result) > 512 {
-			result = result[:512] + "..."
-		}
-		errStr := ""
-		if ferr != nil {
-			errStr = ferr.Error()
-		}
-		trace = append(trace, types.DeepToolCall{
-			Step:   step,
-			Tool:   call.Name,
-			Args:   args,
-			Result: result,
-			Error:  errStr,
-			Ms:     elapsed,
-		})
+		p.appendToolTrace(trace, step, call, out, ferr, time.Since(t0).Milliseconds())
 		if ferr != nil {
 			return llm.ToolResult{ID: call.ID, Content: "error: " + ferr.Error(), IsError: true}
 		}
 		return llm.ToolResult{ID: call.ID, Content: out}
 	}
+}
 
-	resp, err := p.Executor.CompleteWithTools(ctx, llm.ToolRequest{
-		System:   system,
-		Messages: []llm.Message{{Role: "user", Content: user}},
-		Tools:    deepToolDefs(),
-		Handler:  handler,
-		MaxSteps: budget,
-	})
-	if err != nil {
-		return f, err
+func (p *PlanVerifier) appendToolTrace(trace *[]types.DeepToolCall, step int, call llm.ToolCall, out string, ferr error, elapsed int64) {
+	errStr := ""
+	if ferr != nil {
+		errStr = ferr.Error()
 	}
+	*trace = append(*trace, types.DeepToolCall{
+		Step:   step,
+		Tool:   call.Name,
+		Args:   truncate(compactJSON(call.Input), 200),
+		Result: truncate(out, 512),
+		Error:  errStr,
+		Ms:     elapsed,
+	})
+}
 
+func (p *PlanVerifier) applyExecutorVerdict(f types.Finding, resp llm.ToolResponse) types.Finding {
 	verdict, reason, fix, gates, defenseInDepth := parseGateVerdict(resp.FinalText)
 
 	// Stash baseline metadata first so gate logic below can override safely.
@@ -227,7 +234,7 @@ func (p *PlanVerifier) executePlan(ctx context.Context, f types.Finding, context
 			f.FPReason = reason
 		}
 	}
-	return f, nil
+	return f
 }
 
 func planExecutorUserPrompt(f types.Finding, contextSnippet string, plan []string) string {

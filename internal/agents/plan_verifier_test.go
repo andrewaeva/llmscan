@@ -84,3 +84,55 @@ func TestPlanVerifierMissingConfig(t *testing.T) {
 		t.Fatalf("expected error for missing config")
 	}
 }
+
+func TestPlanVerifierExecutorConfig(t *testing.T) {
+	pv := &PlanVerifier{}
+	system, budget := pv.executorConfig()
+	if system != planVerifierExecutorSystem {
+		t.Fatalf("system=%q want default", system)
+	}
+	if budget != 30 {
+		t.Fatalf("budget=%d want 30", budget)
+	}
+
+	pv.ExecutorPromptOverride = "custom executor prompt"
+	pv.Budget = 7
+	system, budget = pv.executorConfig()
+	if system != "custom executor prompt" {
+		t.Fatalf("system=%q want custom override", system)
+	}
+	if budget != 7 {
+		t.Fatalf("budget=%d want 7", budget)
+	}
+}
+
+func TestPlanVerifierApplyExecutorVerdictModelSelectionAndFP(t *testing.T) {
+	resp := llm.ToolResponse{
+		Model: "response-model",
+		FinalText: `{
+			"verdict":"refuted",
+			"reason":"sink is unreachable from untrusted input"
+		}`,
+	}
+
+	pv := &PlanVerifier{}
+	got := pv.applyExecutorVerdict(types.Finding{Severity: types.SevHigh}, resp)
+	if !got.Verified {
+		t.Fatalf("expected verified finding")
+	}
+	if got.VerifierModel != "response-model" {
+		t.Fatalf("VerifierModel=%q want response-model", got.VerifierModel)
+	}
+	if !got.FalsePositive {
+		t.Fatalf("expected false_positive=true for refuted verdict without gates")
+	}
+	if got.FPReason != "sink is unreachable from untrusted input" {
+		t.Fatalf("FPReason=%q", got.FPReason)
+	}
+
+	pv = &PlanVerifier{ModelName: "override-model"}
+	got = pv.applyExecutorVerdict(types.Finding{Severity: types.SevHigh}, resp)
+	if got.VerifierModel != "override-model" {
+		t.Fatalf("VerifierModel=%q want override-model", got.VerifierModel)
+	}
+}
