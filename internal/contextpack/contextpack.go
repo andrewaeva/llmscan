@@ -82,21 +82,21 @@ type Fragment struct {
 
 // Pack is the full assembled bundle for one chunk.
 type Pack struct {
-	Chunk         Fragment   `json:"chunk"`                    // priority=0, never dropped
-	Fragments     []Fragment `json:"fragments"`                // all other code, in render order
-	Budget        int        `json:"budget"`                   // hard token cap that was applied
-	UsedTokens    int        `json:"used_tokens"`              // sum of Fragment.Tokens + Chunk.Tokens
-	Dropped       int        `json:"dropped"`                  // candidates that did not fit at all
-	Squeezed      int        `json:"squeezed"`                 // candidates included but truncated
-	CacheKey      string     `json:"cache_key"`                // sha256(chunk_hash || cfg_hash)
-	Truncated     bool       `json:"truncated"`                // true if any code was dropped or squeezed
+	Chunk      Fragment   `json:"chunk"`       // priority=0, never dropped
+	Fragments  []Fragment `json:"fragments"`   // all other code, in render order
+	Budget     int        `json:"budget"`      // hard token cap that was applied
+	UsedTokens int        `json:"used_tokens"` // sum of Fragment.Tokens + Chunk.Tokens
+	Dropped    int        `json:"dropped"`     // candidates that did not fit at all
+	Squeezed   int        `json:"squeezed"`    // candidates included but truncated
+	CacheKey   string     `json:"cache_key"`   // sha256(chunk_hash || cfg_hash)
+	Truncated  bool       `json:"truncated"`   // true if any code was dropped or squeezed
 
 	// Overflow signals that even after squeezing+dropping, the chunk alone
 	// is too large to leave useful room for dependencies inside Budget. The
 	// pipeline reads this and re-chunks the input. A chunk is considered
 	// overflowing when Chunk.Tokens >= Budget * OverflowRatio.
-	Overflow         bool    `json:"overflow"`
-	OverflowReason   string  `json:"overflow_reason,omitempty"`
+	Overflow           bool    `json:"overflow"`
+	OverflowReason     string  `json:"overflow_reason,omitempty"`
 	ChunkShareOfBudget float64 `json:"chunk_share_of_budget"` // 0..1+
 
 	candidatesAll []Fragment // pre-budget pool, kept for diagnostics
@@ -311,7 +311,15 @@ func (b *Builder) Build(ctx context.Context, c types.FileTarget) Pack {
 		CacheKey: b.cacheKey(c),
 	}
 	pack.ChunkShareOfBudget = float64(chunkFrag.Tokens) / float64(b.Cfg.BudgetTokens)
+	b.markChunkOverflow(&pack, chunkFrag)
+	cands := dedupe(b.collectCandidates(ctx, c), chunkFrag)
+	pack.candidatesAll = cands
+	pack.UsedTokens = b.admitCandidates(&pack, cands, chunkFrag.Tokens)
+	pack.Truncated = pack.Dropped > 0 || pack.Squeezed > 0
+	return pack
+}
 
+func (b *Builder) markChunkOverflow(pack *Pack, chunkFrag Fragment) {
 	// Early overflow signal: if the chunk itself eats too much of the budget,
 	// flag it so the pipeline re-chunks. We still collect dependencies — the
 	// caller may decide to send the pack as-is for very small budgets.
@@ -319,18 +327,17 @@ func (b *Builder) Build(ctx context.Context, c types.FileTarget) Pack {
 	if ratio <= 0 {
 		ratio = 0.6
 	}
-	if chunkFrag.Tokens > int(float64(b.Cfg.BudgetTokens)*ratio) {
-		pack.Overflow = true
-		pack.OverflowReason = fmt.Sprintf(
-			"chunk_tokens=%d exceeds %.0f%% of budget=%d (cap=%d)",
-			chunkFrag.Tokens, ratio*100, b.Cfg.BudgetTokens,
-			int(float64(b.Cfg.BudgetTokens)*ratio))
+	capTokens := int(float64(b.Cfg.BudgetTokens) * ratio)
+	if chunkFrag.Tokens <= capTokens {
+		return
 	}
+	pack.Overflow = true
+	pack.OverflowReason = fmt.Sprintf(
+		"chunk_tokens=%d exceeds %.0f%% of budget=%d (cap=%d)",
+		chunkFrag.Tokens, ratio*100, b.Cfg.BudgetTokens, capTokens)
+}
 
-	// Used budget already includes the chunk itself, which is sacrosanct.
-	used := chunkFrag.Tokens
-
-	// 1) Collect candidates from every enabled source.
+func (b *Builder) collectCandidates(ctx context.Context, c types.FileTarget) []Fragment {
 	var cands []Fragment
 	cands = append(cands, b.collectCallees(c)...)
 	cands = append(cands, b.collectCallers(c)...)
@@ -349,12 +356,10 @@ func (b *Builder) Build(ctx context.Context, c types.FileTarget) Pack {
 	if b.Cfg.IncludeConsts {
 		cands = append(cands, b.collectConsts(c)...)
 	}
+	return cands
+}
 
-	// 2) Deduplicate by overlapping (file, range). Merges priorities + reasons.
-	cands = dedupe(cands, chunkFrag)
-	pack.candidatesAll = cands
-
-	// 3) Priority-greedy admission within the remaining budget.
+func (b *Builder) admitCandidates(pack *Pack, cands []Fragment, used int) int {
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].Priority != cands[j].Priority {
 			return cands[i].Priority < cands[j].Priority
@@ -362,31 +367,29 @@ func (b *Builder) Build(ctx context.Context, c types.FileTarget) Pack {
 		return cands[i].Tokens < cands[j].Tokens
 	})
 	for _, f := range cands {
-		left := b.Cfg.BudgetTokens - used
-		if left <= 100 {
-			pack.Dropped++
-			continue
-		}
-		if f.Tokens <= left {
-			pack.Fragments = append(pack.Fragments, f)
-			used += f.Tokens
-			continue
-		}
-		// Too big — squeeze if it's important (priority <=2) and there's a
-		// non-trivial budget remaining; otherwise drop.
-		if f.Priority <= 2 && left >= 400 {
-			sq := b.squeeze(f, left)
-			pack.Fragments = append(pack.Fragments, sq)
-			pack.Squeezed++
-			used += sq.Tokens
-			continue
-		}
-		pack.Dropped++
+		used = b.admitCandidate(pack, f, used)
 	}
+	return used
+}
 
-	pack.UsedTokens = used
-	pack.Truncated = pack.Dropped > 0 || pack.Squeezed > 0
-	return pack
+func (b *Builder) admitCandidate(pack *Pack, f Fragment, used int) int {
+	left := b.Cfg.BudgetTokens - used
+	if left <= 100 {
+		pack.Dropped++
+		return used
+	}
+	if f.Tokens <= left {
+		pack.Fragments = append(pack.Fragments, f)
+		return used + f.Tokens
+	}
+	if f.Priority <= 2 && left >= 400 {
+		sq := b.squeeze(f, left)
+		pack.Fragments = append(pack.Fragments, sq)
+		pack.Squeezed++
+		return used + sq.Tokens
+	}
+	pack.Dropped++
+	return used
 }
 
 // chunkFragment wraps the chunk itself as a Fragment with priority 0.

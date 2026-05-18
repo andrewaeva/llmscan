@@ -78,20 +78,20 @@ func (r *Refiner) Refine(ctx context.Context, file string, findings []types.Find
 	if r == nil || r.Client == nil || len(findings) < 2 {
 		return findings, nil
 	}
-	max := r.MaxFindings
-	if max <= 0 {
-		max = 20
+	maxFindings := r.MaxFindings
+	if maxFindings <= 0 {
+		maxFindings = 20
 	}
-	if len(findings) > max {
+	if len(findings) > maxFindings {
 		// Refine only the head; tail is passed through. Sorting by score is
 		// the caller's job — we trust the order given.
-		r.logf("refine[%s]: %d findings exceed cap %d, refining head only", file, len(findings), max)
-		head, _ := findings[:max], findings[max:]
+		r.logf("refine[%s]: %d findings exceed cap %d, refining head only", file, len(findings), maxFindings)
+		head, _ := findings[:maxFindings], findings[maxFindings:]
 		refinedHead, err := r.Refine(ctx, file, head)
 		if err != nil {
 			return findings, err
 		}
-		return append(refinedHead, findings[max:]...), nil
+		return append(refinedHead, findings[maxFindings:]...), nil
 	}
 
 	decision, err := r.askReducer(ctx, file, findings)

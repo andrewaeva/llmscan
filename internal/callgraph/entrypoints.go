@@ -23,12 +23,12 @@ const (
 
 // Info describes one detected entry point.
 type Info struct {
-	Node           NodeID `json:"node"`
-	File           string           `json:"file"`
-	Func           string           `json:"func"`
-	Kind           Kind             `json:"kind"`
-	Reason         string           `json:"reason"`
-	ConfidenceHint float64          `json:"confidence_hint"`
+	Node           NodeID  `json:"node"`
+	File           string  `json:"file"`
+	Func           string  `json:"func"`
+	Kind           Kind    `json:"kind"`
+	Reason         string  `json:"reason"`
+	ConfidenceHint float64 `json:"confidence_hint"`
 }
 
 // Detect scans every parsed file and returns detected entry points. The

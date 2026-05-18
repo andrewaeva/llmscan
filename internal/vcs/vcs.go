@@ -100,8 +100,8 @@ func Open(kind Kind, root string) (VCS, error) {
 // or zero values, never panic.
 type noneVCS struct{ root string }
 
-func (noneVCS) Kind() Kind                                          { return KindNone }
-func (n noneVCS) Root() string                                      { return n.root }
+func (noneVCS) Kind() Kind     { return KindNone }
+func (n noneVCS) Root() string { return n.root }
 func (noneVCS) ChangedFiles(context.Context, string) ([]string, error) {
 	return nil, errors.New("vcs: no VCS detected")
 }

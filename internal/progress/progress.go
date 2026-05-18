@@ -100,12 +100,12 @@ func NewAuto(mode Mode, w io.Writer, isTTY bool) Reporter {
 // NoopReporter discards all events.
 type NoopReporter struct{}
 
-func (*NoopReporter) Stage(string, int)        {}
-func (*NoopReporter) Inc(string, int)          {}
-func (*NoopReporter) SetTotal(string, int)     {}
-func (*NoopReporter) Done(string)              {}
-func (*NoopReporter) Logf(string, ...any)      {}
-func (*NoopReporter) Stop()                    {}
+func (*NoopReporter) Stage(string, int)    {}
+func (*NoopReporter) Inc(string, int)      {}
+func (*NoopReporter) SetTotal(string, int) {}
+func (*NoopReporter) Done(string)          {}
+func (*NoopReporter) Logf(string, ...any)  {}
+func (*NoopReporter) Stop()                {}
 
 // ---------- Stage record (shared by Plain and TUI) ----------
 

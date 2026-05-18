@@ -21,7 +21,7 @@ import (
 
 // TaintPath is one source-to-sink data-flow chain across files/functions.
 type TaintPath struct {
-	Source     callgraph.Info `json:"source"`
+	Source     callgraph.Info   `json:"source"`
 	Hops       []types.TraceHop `json:"hops"`
 	Sink       SinkRef          `json:"sink"`
 	Sanitizers []SanitizerRef   `json:"sanitizers,omitempty"`

@@ -14,9 +14,9 @@ import (
 
 // resetTransport is a test-only helper to dial the global transport policy
 // up or down between subtests. resetTransportForTest bypasses sync.Once.
-func resetTransport(t *testing.T, inflight, maxRetries int, base, max time.Duration) {
+func resetTransport(t *testing.T, inflight, maxRetries int, base, maxDelay time.Duration) {
 	t.Helper()
-	resetTransportForTest(inflight, maxRetries, base, max)
+	resetTransportForTest(inflight, maxRetries, base, maxDelay)
 }
 
 // disableTransport returns the global policy to its zero-retry, no-cap state.
@@ -219,14 +219,14 @@ func TestDoHTTP_ContextCancelInterruptsBackoff(t *testing.T) {
 
 func TestBackoffDelay_ClampsAndScales(t *testing.T) {
 	base := 100 * time.Millisecond
-	max := 1 * time.Second
+	maxDelay := 1 * time.Second
 	for attempt := 1; attempt <= 10; attempt++ {
-		d := backoffDelay(base, max, attempt)
-		if d < 0 || d > max+max/4 { // small jitter slack
+		d := backoffDelay(base, maxDelay, attempt)
+		if d < 0 || d > maxDelay+maxDelay/4 { // small jitter slack
 			t.Errorf("attempt=%d d=%s outside [0,max+jitter]", attempt, d)
 		}
-		if d > max {
-			t.Errorf("attempt=%d d=%s exceeds max=%s", attempt, d, max)
+		if d > maxDelay {
+			t.Errorf("attempt=%d d=%s exceeds max=%s", attempt, d, maxDelay)
 		}
 	}
 }

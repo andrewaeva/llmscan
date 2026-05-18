@@ -76,39 +76,19 @@ func stageBuildContextPacks(ctx context.Context, e *Engine, s *runState) error {
 	cacheEnabled := e.Cfg.Scan.Context.Cache && cacheDB != nil
 
 	queue := append([]types.FileTarget(nil), s.chunks...)
-	outChunks := make([]types.FileTarget, 0, len(queue))
-	outPacks := make(map[string]*contextpack.Pack, len(queue))
-
-	var (
-		totalFragments  int
-		totalTokensSent int
-		tokenSamples    []int
-		overflowCount   int
-		rechunks        int
-		cacheHits       int
-		totalSqueezed   int
-		totalDropped    int
-	)
+	state := newContextPackBuildState(len(queue))
 
 	for round := 0; round < maxRounds && len(queue) > 0; round++ {
-		next := queue[:0]
+		next := make([]types.FileTarget, 0, len(queue)*2)
 		for _, c := range queue {
-			pack, hit := lookupPackFromCache(builder, cacheDB, cacheEnabled, c)
+			pack, hit := loadOrBuildContextPack(ctx, builder, cacheDB, cacheEnabled, c)
 			if hit {
-				cacheHits++
-			} else {
-				pack = builder.Build(ctx, c)
-				if cacheEnabled && !pack.Overflow {
-					if payload, err := contextpack.EncodePack(pack); err == nil {
-						_ = cacheDB.PutContextPack(builder.CacheKeyFor(c), payload)
-					}
-				}
+				state.cacheHits++
 			}
-
-			if pack.Overflow && round+1 < maxRounds && c.Lines > 4 {
+			if shouldRechunkPack(pack, round, maxRounds, c) {
 				// Split chunk and re-queue for next round.
-				overflowCount++
-				rechunks++
+				state.overflowCount++
+				state.rechunks++
 				left, right := chunker.SplitInHalf(c)
 				next = append(next, left, right)
 				e.logf("context-pack: overflow on %s:%d-%d (%s) → split",
@@ -116,18 +96,11 @@ func stageBuildContextPacks(ctx context.Context, e *Engine, s *runState) error {
 				continue
 			}
 			if pack.Overflow {
-				overflowCount++
+				state.overflowCount++
 				e.logf("context-pack: overflow on %s:%d-%d (kept, max splits reached)",
 					c.Path, c.LineOffset+1, c.LineOffset+c.Lines)
 			}
-			outChunks = append(outChunks, c)
-			p := pack
-			outPacks[chunkPackKey(c)] = &p
-			totalFragments += len(pack.Fragments)
-			totalTokensSent += pack.UsedTokens
-			tokenSamples = append(tokenSamples, pack.UsedTokens)
-			totalSqueezed += pack.Squeezed
-			totalDropped += pack.Dropped
+			state.record(c, pack)
 			e.prog().Inc("context-pack", 1)
 		}
 		queue = next
@@ -137,40 +110,92 @@ func stageBuildContextPacks(ctx context.Context, e *Engine, s *runState) error {
 	// with overflow flag preserved so the operator sees in logs/stats.
 	for _, c := range queue {
 		pack := builder.Build(ctx, c)
-		outChunks = append(outChunks, c)
-		p := pack
-		outPacks[chunkPackKey(c)] = &p
-		totalFragments += len(pack.Fragments)
-		totalTokensSent += pack.UsedTokens
-		tokenSamples = append(tokenSamples, pack.UsedTokens)
-		totalSqueezed += pack.Squeezed
-		totalDropped += pack.Dropped
+		state.record(c, pack)
 	}
 
-	s.chunks = outChunks
+	s.chunks = state.outChunks
 	s.cpStats = types.ContextPackStats{
-		Packs:            len(outChunks),
-		SqueezedChunks:   totalSqueezed,
-		DroppedFragments: totalDropped,
-		Rechunks:         rechunks,
-		CacheHits:        cacheHits,
+		Packs:            len(state.outChunks),
+		SqueezedChunks:   state.totalSqueezed,
+		DroppedFragments: state.totalDropped,
+		Rechunks:         state.rechunks,
+		CacheHits:        state.cacheHits,
 	}
-	if n := len(outChunks); n > 0 {
-		s.cpStats.AvgFragments = float64(totalFragments) / float64(n)
-		s.cpStats.AvgTokensSent = float64(totalTokensSent) / float64(n)
-		s.cpStats.OverflowRate = float64(overflowCount) / float64(n+overflowCount)
-		s.cpStats.P95TokensSent = percentileInt(tokenSamples, 95)
+	if n := len(state.outChunks); n > 0 {
+		s.cpStats.AvgFragments = float64(state.totalFragments) / float64(n)
+		s.cpStats.AvgTokensSent = float64(state.totalTokensSent) / float64(n)
+		s.cpStats.OverflowRate = float64(state.overflowCount) / float64(n+state.overflowCount)
+		s.cpStats.P95TokensSent = percentileInt(state.tokenSamples, 95)
 	}
 	s.report.Stats.ContextPack = &s.cpStats
 
 	// Stash on scanContext (will be set during dag-build).
-	s.scanCtx.packsByChunkKey = outPacks
+	s.scanCtx.packsByChunkKey = state.outPacks
 
 	e.prog().Done("context-pack")
 	e.logf("context-pack: %d packs, avg frags=%.1f avg tokens=%.0f overflow=%d rechunks=%d cache_hits=%d",
-		len(outChunks), s.cpStats.AvgFragments, s.cpStats.AvgTokensSent,
-		overflowCount, rechunks, cacheHits)
+		len(state.outChunks), s.cpStats.AvgFragments, s.cpStats.AvgTokensSent,
+		state.overflowCount, state.rechunks, state.cacheHits)
 	return nil
+}
+
+type contextPackBuildState struct {
+	outChunks []types.FileTarget
+	outPacks  map[string]*contextpack.Pack
+
+	totalFragments  int
+	totalTokensSent int
+	tokenSamples    []int
+	overflowCount   int
+	rechunks        int
+	cacheHits       int
+	totalSqueezed   int
+	totalDropped    int
+}
+
+func newContextPackBuildState(capacity int) *contextPackBuildState {
+	return &contextPackBuildState{
+		outChunks: make([]types.FileTarget, 0, capacity),
+		outPacks:  make(map[string]*contextpack.Pack, capacity),
+	}
+}
+
+func (s *contextPackBuildState) record(c types.FileTarget, pack contextpack.Pack) {
+	s.outChunks = append(s.outChunks, c)
+	p := pack
+	s.outPacks[chunkPackKey(c)] = &p
+	s.totalFragments += len(pack.Fragments)
+	s.totalTokensSent += pack.UsedTokens
+	s.tokenSamples = append(s.tokenSamples, pack.UsedTokens)
+	s.totalSqueezed += pack.Squeezed
+	s.totalDropped += pack.Dropped
+}
+
+func shouldRechunkPack(pack contextpack.Pack, round, maxRounds int, c types.FileTarget) bool {
+	return pack.Overflow && round+1 < maxRounds && c.Lines > 4
+}
+
+func loadOrBuildContextPack(
+	ctx context.Context,
+	builder *contextpack.Builder,
+	cacheDB interface {
+		GetContextPack(string) ([]byte, bool)
+		PutContextPack(string, []byte) error
+	},
+	cacheEnabled bool,
+	c types.FileTarget,
+) (contextpack.Pack, bool) {
+	pack, hit := lookupPackFromCache(builder, cacheDB, cacheEnabled, c)
+	if hit {
+		return pack, true
+	}
+	pack = builder.Build(ctx, c)
+	if cacheEnabled && !pack.Overflow {
+		if payload, err := contextpack.EncodePack(pack); err == nil {
+			_ = cacheDB.PutContextPack(builder.CacheKeyFor(c), payload)
+		}
+	}
+	return pack, false
 }
 
 // lookupPackFromCache tries to fetch a previously-encoded pack from the cache.

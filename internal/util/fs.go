@@ -132,4 +132,3 @@ func Walk(root string, include, exclude []string, maxBytes int, followSymlinks b
 	})
 	return targets, err
 }
-

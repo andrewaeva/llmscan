@@ -18,6 +18,7 @@ package ast
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/gob"
@@ -81,10 +82,10 @@ func OpenCache(path string) (*Cache, error) {
 		return nil, fmt.Errorf("ast cache: open: %w", err)
 	}
 	conn.SetMaxOpenConns(1) // sqlite tolerates a single writer best
-	if _, err := conn.Exec(`CREATE TABLE IF NOT EXISTS ast_cache (
-		key       TEXT PRIMARY KEY,
-		lang      TEXT NOT NULL,
-		path      TEXT NOT NULL,
+	if _, err := conn.ExecContext(context.Background(), `CREATE TABLE IF NOT EXISTS ast_cache (
+			key       TEXT PRIMARY KEY,
+			lang      TEXT NOT NULL,
+			path      TEXT NOT NULL,
 		mtime     INTEGER NOT NULL,
 		size      INTEGER NOT NULL,
 		blob      BLOB NOT NULL,
@@ -132,7 +133,7 @@ func (c *Cache) Clear() error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, err := c.db.Exec(`DELETE FROM ast_cache`)
+	_, err := c.db.ExecContext(context.Background(), `DELETE FROM ast_cache`)
 	return err
 }
 
@@ -151,7 +152,7 @@ func (c *Cache) Lookup(absPath string, src []byte, lang Language) (*FileAST, boo
 	}
 	key := keyFor(src, lang)
 	c.mu.Lock()
-	row := c.db.QueryRow(`SELECT blob FROM ast_cache WHERE key = ?`, key)
+	row := c.db.QueryRowContext(context.Background(), `SELECT blob FROM ast_cache WHERE key = ?`, key)
 	var blob []byte
 	err := row.Scan(&blob)
 	c.mu.Unlock()
@@ -199,7 +200,7 @@ func (c *Cache) Store(a *FileAST) error {
 		size = st.Size()
 	}
 	c.mu.Lock()
-	_, err = c.db.Exec(
+	_, err = c.db.ExecContext(context.Background(),
 		`INSERT OR REPLACE INTO ast_cache(key, lang, path, mtime, size, blob, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		key, string(a.Language), a.Path, mtime, size, blob, time.Now().Unix(),
 	)

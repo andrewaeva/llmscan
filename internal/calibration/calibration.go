@@ -4,14 +4,14 @@
 //
 // Workflow:
 //
-//	1. Run `llmscan eval` against a labelled corpus.
-//	2. Each predicted finding is bucketed as true-positive (matched label) or
-//	   false-positive (no matching label). We collect (raw_score, is_tp) pairs.
-//	3. PAV fits a monotonically non-decreasing step function f: [0,1] -> [0,1]
-//	   such that f(raw_score) ~ P(true positive | raw_score).
-//	4. The fitted model is persisted as JSON and loaded on subsequent scans;
-//	   each finding's Score is replaced by f(raw_score) before --min-score is
-//	   applied. Calibrated scores have an honest probabilistic meaning.
+//  1. Run `llmscan eval` against a labelled corpus.
+//  2. Each predicted finding is bucketed as true-positive (matched label) or
+//     false-positive (no matching label). We collect (raw_score, is_tp) pairs.
+//  3. PAV fits a monotonically non-decreasing step function f: [0,1] -> [0,1]
+//     such that f(raw_score) ~ P(true positive | raw_score).
+//  4. The fitted model is persisted as JSON and loaded on subsequent scans;
+//     each finding's Score is replaced by f(raw_score) before --min-score is
+//     applied. Calibrated scores have an honest probabilistic meaning.
 //
 // This is intentionally a tiny pure-Go implementation — no gonum / scikit
 // dependency.
@@ -44,7 +44,7 @@ const SchemaVersion = 1
 type Model struct {
 	// Schema is the on-disk format version. 0 in legacy files; treated as 1.
 	Schema    int       `json:"schema,omitempty"`
-	Method    string    `json:"method"`           // "isotonic-pav" or "platt"
+	Method    string    `json:"method"` // "isotonic-pav" or "platt"
 	CreatedAt time.Time `json:"created_at"`
 	NSamples  int       `json:"n_samples"`
 	Knots     []Knot    `json:"knots"`
@@ -195,9 +195,9 @@ func Save(path string, m *Model) error {
 	if m == nil {
 		return errors.New("calibration save: nil model")
 	}
-	copy := *m
-	copy.Schema = SchemaVersion
-	data, err := json.MarshalIndent(&copy, "", "  ")
+	modelCopy := *m
+	modelCopy.Schema = SchemaVersion
+	data, err := json.MarshalIndent(&modelCopy, "", "  ")
 	if err != nil {
 		return err
 	}

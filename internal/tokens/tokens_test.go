@@ -56,11 +56,11 @@ func TestSetCounter(t *testing.T) {
 
 func TestCountLines(t *testing.T) {
 	cases := map[string]int{
-		"":            0,
-		"one":         1,
-		"one\ntwo":    2,
-		"a\nb\nc\n":   4, // trailing newline = empty 4th line in split, but Count returns 3 + 1
-		"\n\n":        3,
+		"":          0,
+		"one":       1,
+		"one\ntwo":  2,
+		"a\nb\nc\n": 4, // trailing newline = empty 4th line in split, but Count returns 3 + 1
+		"\n\n":      3,
 	}
 	for in, want := range cases {
 		if got := CountLines(in); got != want {

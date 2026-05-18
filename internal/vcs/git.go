@@ -91,7 +91,7 @@ func parseGitBlamePorcelain(text string) BlameLine {
 func (g *gitVCS) CurrentBranch(ctx context.Context) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "git", "-C", g.root, "branch", "--show-current")
+	cmd := exec.CommandContext(cctx, "git", "-C", g.root, "branch", "--show-current") //nolint:gosec // g.root is repository root from trusted detection
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

@@ -15,12 +15,12 @@ import (
 // a server that records peak concurrency. With cap=K the peak must never
 // exceed K, regardless of how many callers fan in.
 func TestInflightLimit_RespectsCap(t *testing.T) {
-	const cap = 3
+	const inflightCap = 3
 	const callers = 20
 
 	// Disable retries so a slow request can't accidentally retry into the
 	// next slot and falsely depress the peak.
-	resetTransportForTest(cap, 1, 1*time.Millisecond, 5*time.Millisecond)
+	resetTransportForTest(inflightCap, 1, 1*time.Millisecond, 5*time.Millisecond)
 	t.Cleanup(disableTransport)
 
 	var inFlight atomic.Int32
@@ -57,8 +57,8 @@ func TestInflightLimit_RespectsCap(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := peak.Load(); got > cap {
-		t.Fatalf("peak inflight=%d exceeded cap=%d", got, cap)
+	if got := peak.Load(); got > inflightCap {
+		t.Fatalf("peak inflight=%d exceeded cap=%d", got, inflightCap)
 	}
 }
 

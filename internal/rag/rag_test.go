@@ -14,7 +14,7 @@ import (
 // This gives us controllable cosine similarity without any randomness.
 type detEmbedder struct {
 	dim       int
-	failBatch int          // 1-based: if >0, the n-th Embed call returns an error
+	failBatch int // 1-based: if >0, the n-th Embed call returns an error
 	calls     int
 	override  func([]string) ([][]float32, error) // optional hook
 }

@@ -6,16 +6,16 @@
 // devil's-advocate setup using the SAME model run with a different
 // temperature/seed:
 //
-//   1. Proponent (round 0): given the finding and any prior context, argue
-//      whether the finding is a TRUE POSITIVE. Returns verdict + rationale.
-//   2. Opponent (round 0): the same prompt but instructed to argue the
-//      OPPOSITE verdict to whatever the proponent emitted.
-//   3. If they agree → consensus, return the verdict with the joined
-//      rationale.
-//   4. If they disagree, run round 1: each side sees the other's argument
-//      and is allowed to either concede or sharpen their case. After
-//      MaxRounds (default 2) without consensus we return DebateResult with
-//      Verdict="split" and a confidence penalty.
+//  1. Proponent (round 0): given the finding and any prior context, argue
+//     whether the finding is a TRUE POSITIVE. Returns verdict + rationale.
+//  2. Opponent (round 0): the same prompt but instructed to argue the
+//     OPPOSITE verdict to whatever the proponent emitted.
+//  3. If they agree → consensus, return the verdict with the joined
+//     rationale.
+//  4. If they disagree, run round 1: each side sees the other's argument
+//     and is allowed to either concede or sharpen their case. After
+//     MaxRounds (default 2) without consensus we return DebateResult with
+//     Verdict="split" and a confidence penalty.
 //
 // The debater is intentionally model-agnostic; the only requirement is that
 // the same llm.Client implements Complete. We expose TemperatureOverride

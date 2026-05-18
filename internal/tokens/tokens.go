@@ -71,10 +71,10 @@ func approxCount(s string) int {
 	)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		switch {
-		case c == ' ' || c == '\t':
+		switch c {
+		case ' ', '\t':
 			ws++
-		case c == '\n' || c == '\r':
+		case '\n', '\r':
 			nl++
 		default:
 			ascii++

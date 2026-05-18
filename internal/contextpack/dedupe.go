@@ -142,58 +142,76 @@ func (b *Builder) squeeze(f Fragment, budget int) Fragment {
 		return f
 	}
 	lines := strings.Split(f.Code, "\n")
-	head := b.Cfg.SqueezeHeadLines
-	tail := b.Cfg.SqueezeTailLines
+	head, tail := b.squeezeWindow()
+
+	// Shrink head/tail proportionally until we fit. Refuse below 5/5.
+	for {
+		head, tail = clampSqueezeWindow(head, tail)
+		code, tk, shortEnough := buildSqueezedCode(f.Code, lines, head, tail)
+		if shortEnough || tk <= budget || (head <= 5 && tail <= 5) {
+			f.Code = code
+			f.Tokens = tk
+			f.Squeezed = true
+			return f
+		}
+
+		// shrink further
+		head = shrinkWindow(head)
+		tail = shrinkWindow(tail)
+	}
+}
+
+func (b *Builder) squeezeWindow() (head, tail int) {
+	head = b.Cfg.SqueezeHeadLines
+	tail = b.Cfg.SqueezeTailLines
 	if head <= 0 {
 		head = 40
 	}
 	if tail <= 0 {
 		tail = 20
 	}
-	// Shrink head/tail proportionally until we fit. Refuse below 5/5.
-	for {
-		if head < 5 || tail < 5 {
-			head = 5
-			tail = 5
-		}
-		if head+tail >= len(lines) {
-			// Fragment is short enough textually but token estimate was off.
-			f.Squeezed = true
-			f.Tokens = tokens.Estimate(f.Code)
-			return f
-		}
-		var sb strings.Builder
-		sb.Grow(len(f.Code) / 4)
-		for i := 0; i < head && i < len(lines); i++ {
-			sb.WriteString(lines[i])
-			sb.WriteByte('\n')
-		}
-		omitted := len(lines) - head - tail
-		if omitted > 0 {
-			sb.WriteString("// ... (")
-			sb.WriteString(itoa(omitted))
-			sb.WriteString(" lines elided to fit context budget) ...\n")
-		}
-		for i := len(lines) - tail; i < len(lines); i++ {
-			if i < head {
-				continue
-			}
-			sb.WriteString(lines[i])
-			sb.WriteByte('\n')
-		}
-		code := sb.String()
-		tk := tokens.Estimate(code)
-		if tk <= budget || (head <= 5 && tail <= 5) {
-			f.Code = code
-			f.Tokens = tk
-			f.Squeezed = true
-			return f
-		}
-		// shrink further
-		head = head * 3 / 4
-		tail = tail * 3 / 4
-	}
+	return head, tail
 }
+
+func clampSqueezeWindow(head, tail int) (int, int) {
+	if head < 5 {
+		head = 5
+	}
+	if tail < 5 {
+		tail = 5
+	}
+	return head, tail
+}
+
+func buildSqueezedCode(original string, lines []string, head, tail int) (string, int, bool) {
+	if head+tail >= len(lines) {
+		// Fragment is short enough textually but token estimate was off.
+		return original, tokens.Estimate(original), true
+	}
+	var sb strings.Builder
+	sb.Grow(len(original) / 4)
+	for i := 0; i < head && i < len(lines); i++ {
+		sb.WriteString(lines[i])
+		sb.WriteByte('\n')
+	}
+	omitted := len(lines) - head - tail
+	if omitted > 0 {
+		sb.WriteString("// ... (")
+		sb.WriteString(itoa(omitted))
+		sb.WriteString(" lines elided to fit context budget) ...\n")
+	}
+	for i := len(lines) - tail; i < len(lines); i++ {
+		if i < head {
+			continue
+		}
+		sb.WriteString(lines[i])
+		sb.WriteByte('\n')
+	}
+	code := sb.String()
+	return code, tokens.Estimate(code), false
+}
+
+func shrinkWindow(v int) int { return v * 3 / 4 }
 
 func itoa(n int) string {
 	if n == 0 {

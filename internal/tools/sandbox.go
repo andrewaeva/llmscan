@@ -336,4 +336,3 @@ func (s *Sandbox) Blame(path string, line int) (string, error) {
 func (s *Sandbox) GitBlame(path string, line int) (string, error) {
 	return s.Blame(path, line)
 }
-

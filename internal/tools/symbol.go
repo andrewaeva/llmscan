@@ -48,7 +48,7 @@ func (s *Sandbox) ReadSymbol(path, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, _ := absRel(s.Root, abs)
+	rel := absRel(s.Root, abs)
 	if s.Index == nil || s.Index.ASTs == nil {
 		// Best-effort grep+read fallback.
 		return s.symbolFallback(rel, name)
@@ -245,7 +245,7 @@ func (s *Sandbox) ListImports(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, _ := absRel(s.Root, abs)
+	rel := absRel(s.Root, abs)
 	if s.Index != nil && s.Index.ASTs != nil {
 		a := s.Index.ASTs[rel]
 		if a == nil {
@@ -295,13 +295,13 @@ func (s *Sandbox) callsiteGrep(name string, maxHits int, mode string) (string, e
 
 // ---- helpers ----
 
-func absRel(root, abs string) (string, error) {
+func absRel(root, abs string) string {
 	if !strings.HasPrefix(abs, root) {
-		return abs, nil
+		return abs
 	}
 	r := strings.TrimPrefix(abs, root)
 	r = strings.TrimPrefix(r, "/")
-	return r, nil
+	return r
 }
 
 func kindWithReceiver(s *ast.Symbol) string {

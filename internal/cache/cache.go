@@ -199,7 +199,6 @@ func decodeFloats(b []byte) []float32 {
 	return out
 }
 
-
 // ---- Context pack cache ----
 
 // GetContextPack returns a cached pack payload if present.

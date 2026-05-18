@@ -144,43 +144,51 @@ func (b *Builder) collectTypes(c types.FileTarget) []Fragment {
 	if len(names) == 0 {
 		return nil
 	}
-	out := make([]Fragment, 0, b.Cfg.TypesMax)
-	// Look in the chunk's own file first, then in imported files.
-	files := b.candidateFilesForChunk(c)
+	return b.collectTypeFragments(c, names, b.candidateFilesForChunk(c), b.Cfg.TypesMax)
+}
+
+func (b *Builder) collectTypeFragments(c types.FileTarget, names, files []string, limit int) []Fragment {
+	out := make([]Fragment, 0, limit)
 	for _, name := range names {
-		if len(out) >= b.Cfg.TypesMax {
+		if len(out) >= limit {
 			break
 		}
-		for _, fpath := range files {
-			fast := b.ASTByPath[fpath]
-			if fast == nil {
-				continue
-			}
-			for i := range fast.Symbols {
-				s := &fast.Symbols[i]
-				if s.Name != name {
-					continue
-				}
-				if s.Kind != "class" && s.Kind != "struct" && s.Kind != "interface" {
-					continue
-				}
-				if c.Path == fpath && s.StartLine >= c.LineOffset+1 && s.EndLine <= c.LineOffset+c.Lines {
-					continue // already in chunk
-				}
-				frag, ok := b.symbolFragment(fpath, *s, KindType,
-					"type referenced in chunk", 2)
-				if !ok {
-					continue
-				}
-				out = append(out, frag)
-				break // one definition per name
-			}
-			if len(out) >= b.Cfg.TypesMax {
-				break
-			}
+		frag, ok := b.findTypeFragment(c, files, name)
+		if ok {
+			out = append(out, frag)
 		}
 	}
 	return out
+}
+
+func (b *Builder) findTypeFragment(c types.FileTarget, files []string, name string) (Fragment, bool) {
+	for _, fpath := range files {
+		fast := b.ASTByPath[fpath]
+		if fast == nil {
+			continue
+		}
+		for i := range fast.Symbols {
+			s := &fast.Symbols[i]
+			if s.Name != name || !isTypeSymbolKind(s.Kind) || symbolInChunk(c, fpath, s.StartLine, s.EndLine) {
+				continue
+			}
+			return b.symbolFragment(fpath, *s, KindType, "type referenced in chunk", 2)
+		}
+	}
+	return Fragment{}, false
+}
+
+func isTypeSymbolKind(kind string) bool {
+	return kind == "class" || kind == "struct" || kind == "interface"
+}
+
+func symbolInChunk(c types.FileTarget, fpath string, startLine, endLine int) bool {
+	if c.Path != fpath {
+		return false
+	}
+	chunkStart := c.LineOffset + 1
+	chunkEnd := c.LineOffset + c.Lines
+	return startLine >= chunkStart && endLine <= chunkEnd
 }
 
 // -- sanitizers -------------------------------------------------------------

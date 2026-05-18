@@ -75,7 +75,7 @@ func Save(target, content string) error {
 		content = content[:MaxBytes-len(marker)] + marker
 	}
 	tmp := filepath.Join(dir, FileName+".tmp")
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, FileName))
@@ -224,11 +224,11 @@ func sevRank(s types.Severity) int {
 	return 0
 }
 
-func oneLine(s string, max int) string {
+func oneLine(s string, limit int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > max {
-		s = s[:max] + "..."
+	if len(s) > limit {
+		s = s[:limit] + "..."
 	}
 	return s
 }

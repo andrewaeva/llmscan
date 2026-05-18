@@ -198,13 +198,15 @@ func loadExampleDir(dir, skill string) ([]Example, []error) {
 		out  []Example
 		errs []error
 	)
-	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(strings.ToLower(p), ".json") {
+	root := os.DirFS(dir)
+	_ = fs.WalkDir(root, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
 			return nil
 		}
-		raw, rerr := os.ReadFile(p)
+		raw, rerr := fs.ReadFile(root, p)
+		filePath := filepath.Join(dir, p)
 		if rerr != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", p, rerr))
+			errs = append(errs, fmt.Errorf("%s: %w", filePath, rerr))
 			return nil
 		}
 		// Accept either a single object or an array of objects.
@@ -212,7 +214,7 @@ func loadExampleDir(dir, skill string) ([]Example, []error) {
 		if strings.HasPrefix(trimmed, "[") {
 			var arr []Example
 			if jerr := json.Unmarshal(raw, &arr); jerr != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", p, jerr))
+				errs = append(errs, fmt.Errorf("%s: %w", filePath, jerr))
 				return nil
 			}
 			for i := range arr {
@@ -220,21 +222,21 @@ func loadExampleDir(dir, skill string) ([]Example, []error) {
 					continue
 				}
 				arr[i].SkillName = skill
-				arr[i].Path = p
+				arr[i].Path = filePath
 				out = append(out, arr[i])
 			}
 			return nil
 		}
 		var one Example
 		if jerr := json.Unmarshal(raw, &one); jerr != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", p, jerr))
+			errs = append(errs, fmt.Errorf("%s: %w", filePath, jerr))
 			return nil
 		}
 		if one.Code == "" {
 			return nil
 		}
 		one.SkillName = skill
-		one.Path = p
+		one.Path = filePath
 		out = append(out, one)
 		return nil
 	})

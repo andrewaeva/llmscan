@@ -246,7 +246,7 @@ func writePersistedReports(target string, rep types.Report, reportFile string) e
 
 	var firstErr error
 	writeIf := func(path string, data []byte) {
-		if err := os.WriteFile(path, data, 0o644); err != nil && firstErr == nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("write %s: %w", path, err)
 		}
 	}
@@ -257,7 +257,7 @@ func writePersistedReports(target string, rep types.Report, reportFile string) e
 		txtPath, (txtBuf.Len()+1023)/1024, jsonPath, (jsonBuf.Len()+1023)/1024)
 
 	if reportFile != "" {
-		if err := os.WriteFile(reportFile, txtBuf.Bytes(), 0o644); err != nil && firstErr == nil {
+		if err := os.WriteFile(reportFile, txtBuf.Bytes(), 0o600); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("write %s: %w", reportFile, err)
 		} else if err == nil {
 			fmt.Fprintf(os.Stderr, "[llmscan] report: wrote %s (%d KB)\n",

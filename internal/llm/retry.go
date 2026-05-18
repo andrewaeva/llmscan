@@ -148,10 +148,7 @@ type httpAttemptResult struct {
 // *http.Request each time (request bodies are one-shot readers).
 func doHTTP(ctx context.Context, hc *http.Client, label string, build func(context.Context) (*http.Request, error)) (httpAttemptResult, error) {
 	p := policy.load()
-	maxAttempts := p.maxRetries
-	if maxAttempts <= 0 {
-		maxAttempts = 1
-	}
+	maxAttempts := maxAttempts(p)
 
 	var lastErr error
 	var lastResult httpAttemptResult
@@ -159,48 +156,81 @@ func doHTTP(ctx context.Context, hc *http.Client, label string, build func(conte
 		if err := ctx.Err(); err != nil {
 			return httpAttemptResult{}, err
 		}
-		release, err := acquireInflight(ctx)
-		if err != nil {
-			return httpAttemptResult{}, err
-		}
-		result, callErr := singleHTTPAttempt(ctx, hc, label, build)
-		release()
+		result, callErr := guardedHTTPAttempt(ctx, hc, label, build)
 		lastResult = result
-		// Treat network errors as transient — they often come from proxy
-		// jitter, TLS reset, dropped sockets, and should retry.
-		if callErr != nil {
-			callErr = fmt.Errorf("%s http: %w: %v", label, ErrTransient, callErr)
-		} else if sentinel := classifyHTTP(result.status); sentinel != nil {
-			callErr = fmt.Errorf("%s http %d: %s: %w", label, result.status, string(result.body), sentinel)
-		}
+		callErr = classifyAttemptError(label, result, callErr)
 		if callErr == nil {
 			return result, nil
 		}
 		lastErr = callErr
-		if !isRetryable(callErr) || attempt == maxAttempts {
+		if !shouldRetryAttempt(callErr, attempt, maxAttempts) {
 			return result, callErr
 		}
-		delay := backoffDelay(p.baseDelay, p.maxDelay, attempt)
-		if result.header != nil {
-			if ra := parseRetryAfter(result.header.Get("Retry-After")); ra > 0 {
-				if p.maxDelay > 0 && ra > p.maxDelay {
-					delay = p.maxDelay
-				} else {
-					delay = ra
-				}
-			}
-		}
+		delay := retryDelayForAttempt(p, result, attempt)
 		log.Printf("[llm] retry %d/%d after %.1fs: %v",
 			attempt+1, maxAttempts, delay.Seconds(), callErr) //nolint:gosec // structured log
-		t := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return httpAttemptResult{}, ctx.Err()
-		case <-t.C:
+		if err := waitForRetry(ctx, delay); err != nil {
+			return httpAttemptResult{}, err
 		}
 	}
 	return lastResult, lastErr
+}
+
+func maxAttempts(p transportPolicy) int {
+	if p.maxRetries > 0 {
+		return p.maxRetries
+	}
+	return 1
+}
+
+func guardedHTTPAttempt(ctx context.Context, hc *http.Client, label string, build func(context.Context) (*http.Request, error)) (httpAttemptResult, error) {
+	release, err := acquireInflight(ctx)
+	if err != nil {
+		return httpAttemptResult{}, err
+	}
+	defer release()
+	return singleHTTPAttempt(ctx, hc, label, build)
+}
+
+func classifyAttemptError(label string, result httpAttemptResult, callErr error) error {
+	// Treat network errors as transient — they often come from proxy jitter,
+	// TLS reset, dropped sockets, and should retry.
+	if callErr != nil {
+		return fmt.Errorf("%s http: %w: %v", label, ErrTransient, callErr)
+	}
+	if sentinel := classifyHTTP(result.status); sentinel != nil {
+		return fmt.Errorf("%s http %d: %s: %w", label, result.status, string(result.body), sentinel)
+	}
+	return nil
+}
+
+func shouldRetryAttempt(err error, attempt, maxAttempts int) bool {
+	return isRetryable(err) && attempt < maxAttempts
+}
+
+func retryDelayForAttempt(p transportPolicy, result httpAttemptResult, attempt int) time.Duration {
+	delay := backoffDelay(p.baseDelay, p.maxDelay, attempt)
+	if result.header == nil {
+		return delay
+	}
+	if ra := parseRetryAfter(result.header.Get("Retry-After")); ra > 0 {
+		if p.maxDelay > 0 && ra > p.maxDelay {
+			return p.maxDelay
+		}
+		return ra
+	}
+	return delay
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func singleHTTPAttempt(ctx context.Context, hc *http.Client, _ string, build func(context.Context) (*http.Request, error)) (httpAttemptResult, error) {
@@ -221,9 +251,9 @@ func singleHTTPAttempt(ctx context.Context, hc *http.Client, _ string, build fun
 	}, nil
 }
 
-// backoffDelay returns base * 2^(attempt-1) plus jitter, clamped to max.
+// backoffDelay returns base * 2^(attempt-1) plus jitter, clamped to maxDelay.
 // attempt is 1-based: attempt=1 -> base, attempt=2 -> 2*base, etc.
-func backoffDelay(base, max time.Duration, attempt int) time.Duration {
+func backoffDelay(base, maxDelay time.Duration, attempt int) time.Duration {
 	if base <= 0 {
 		return 0
 	}
@@ -232,14 +262,14 @@ func backoffDelay(base, max time.Duration, attempt int) time.Duration {
 		mult = 1024
 	}
 	d := time.Duration(mult) * base
-	if max > 0 && d > max {
-		d = max
+	if maxDelay > 0 && d > maxDelay {
+		d = maxDelay
 	}
 	// ±25% jitter on the chosen value.
 	jitter := time.Duration(rand.Int63n(int64(d/2 + 1))) //nolint:gosec // non-cryptographic jitter
 	d = d - d/4 + jitter
-	if max > 0 && d > max {
-		d = max
+	if maxDelay > 0 && d > maxDelay {
+		d = maxDelay
 	}
 	return d
 }
@@ -260,4 +290,3 @@ func parseRetryAfter(h string) time.Duration {
 	}
 	return 0
 }
-
