@@ -1,10 +1,24 @@
 package vcs
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 func TestDetectGit(t *testing.T) {
 	dir := t.TempDir()
@@ -89,6 +103,13 @@ func TestParseRange(t *testing.T) {
 	}
 }
 
+func TestSplitRange(t *testing.T) {
+	spec, kind := SplitRange("git:HEAD~1..HEAD")
+	if spec != "HEAD~1..HEAD" || kind != KindGit {
+		t.Fatalf("SplitRange returned (%q, %s)", spec, kind)
+	}
+}
+
 func TestParseGitBlamePorcelain(t *testing.T) {
 	raw := `7d3f0fcd5b1234567890abcdef1234567890abcd 1 1 1
 author Andrey Abakumov
@@ -161,6 +182,34 @@ func TestParseArcStatusPorcelain(t *testing.T) {
 	}
 }
 
+func TestParseArcLogAndDiffNameOnly(t *testing.T) {
+	logOut := `
+commit abcdef
+Author: Test User
+Date: yesterday
+
+src/foo.go
+src/foo.go
+README.md
+`
+	gotLog := parseArcLogNameOnly(logOut, "/repo")
+	if len(gotLog) != 2 {
+		t.Fatalf("log paths=%v", gotLog)
+	}
+	if gotLog[0] != "/repo/src/foo.go" || gotLog[1] != "/repo/README.md" {
+		t.Fatalf("unexpected log paths=%v", gotLog)
+	}
+
+	diffOut := "src/foo.go\nREADME.md\n"
+	gotDiff := parseArcDiffNameOnly(diffOut, "/repo")
+	if len(gotDiff) != 2 {
+		t.Fatalf("diff paths=%v", gotDiff)
+	}
+	if gotDiff[0] != "/repo/src/foo.go" || gotDiff[1] != "/repo/README.md" {
+		t.Fatalf("unexpected diff paths=%v", gotDiff)
+	}
+}
+
 func TestOpenUnsupportedReturnsError(t *testing.T) {
 	// Force an unsupported backend tag.
 	if _, err := Open(Kind("nonsense"), t.TempDir()); err == nil {
@@ -175,5 +224,122 @@ func TestNoneVCSStub(t *testing.T) {
 	}
 	if _, err := n.ChangedFiles(t.Context(), "HEAD"); err == nil {
 		t.Error("none.ChangedFiles should error")
+	}
+}
+
+func TestHasCLI(t *testing.T) {
+	if !hasCLI("git") {
+		t.Fatal("expected git on PATH for integration tests")
+	}
+	if hasCLI("definitely-not-a-real-cli") {
+		t.Fatal("unexpected bogus CLI hit")
+	}
+}
+
+func TestOpenGitAndNone(t *testing.T) {
+	dir := t.TempDir()
+	g, err := Open(KindGit, dir)
+	if err != nil {
+		t.Fatalf("Open git: %v", err)
+	}
+	if g.Kind() != KindGit || g.Root() != dir {
+		t.Fatalf("unexpected git vcs: kind=%s root=%s", g.Kind(), g.Root())
+	}
+
+	n, err := Open(KindNone, dir)
+	if err != nil {
+		t.Fatalf("Open none: %v", err)
+	}
+	if n.Kind() != KindNone || n.Root() != dir {
+		t.Fatalf("unexpected none vcs: kind=%s root=%s", n.Kind(), n.Root())
+	}
+}
+
+func TestGitVCSEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+	runGit(t, dir, "config", "user.name", "Test User")
+	runGit(t, dir, "config", "user.email", "test@example.com")
+
+	tracked := filepath.Join(dir, "tracked.go")
+	if err := os.WriteFile(tracked, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "tracked.go")
+	runGit(t, dir, "commit", "-m", "first")
+
+	if err := os.WriteFile(tracked, []byte("package main\n// second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(dir, "second.go")
+	if err := os.WriteFile(second, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "tracked.go", "second.go")
+	runGit(t, dir, "commit", "-m", "second")
+
+	untracked := filepath.Join(dir, "scratch.go")
+	if err := os.WriteFile(untracked, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	g := &gitVCS{root: dir}
+	files, err := g.ChangedFiles(context.Background(), "HEAD~1..HEAD")
+	if err != nil {
+		t.Fatalf("ChangedFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("changed files=%v", files)
+	}
+	if files[0] != tracked && files[1] != tracked {
+		t.Fatalf("tracked.go missing from changed files=%v", files)
+	}
+	if files[0] != second && files[1] != second {
+		t.Fatalf("second.go missing from changed files=%v", files)
+	}
+
+	branch, err := g.CurrentBranch(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentBranch: %v", err)
+	}
+	if strings.TrimSpace(branch) == "" {
+		t.Fatal("expected non-empty branch name")
+	}
+
+	isTracked, err := g.IsTracked(context.Background(), tracked)
+	if err != nil || !isTracked {
+		t.Fatalf("IsTracked(tracked)=(%v,%v)", isTracked, err)
+	}
+	isTracked, err = g.IsTracked(context.Background(), untracked)
+	if err != nil || isTracked {
+		t.Fatalf("IsTracked(untracked)=(%v,%v)", isTracked, err)
+	}
+
+	blame, err := g.Blame(context.Background(), tracked, 2)
+	if err != nil {
+		t.Fatalf("Blame: %v", err)
+	}
+	if blame.Commit == "" || blame.Author != "Test User" || blame.Summary == "" {
+		t.Fatalf("unexpected blame: %+v", blame)
+	}
+}
+
+func TestArcMethodsReturnUnsupportedWithoutCLI(t *testing.T) {
+	if hasCLI("arc") {
+		t.Skip("arc CLI is available on this host")
+	}
+
+	a := &arcVCS{root: t.TempDir()}
+	if _, err := a.ChangedFiles(context.Background(), ""); err == nil {
+		t.Fatal("expected unsupported error from ChangedFiles")
+	}
+	if _, err := a.Blame(context.Background(), "x.go", 1); err == nil {
+		t.Fatal("expected unsupported error from Blame")
+	}
+	if _, err := a.CurrentBranch(context.Background()); err == nil {
+		t.Fatal("expected unsupported error from CurrentBranch")
+	}
+	if _, err := a.IsTracked(context.Background(), "x.go"); err == nil {
+		t.Fatal("expected unsupported error from IsTracked")
 	}
 }
