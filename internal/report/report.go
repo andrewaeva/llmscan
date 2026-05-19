@@ -39,6 +39,9 @@ func WriteTextWith(w io.Writer, r types.Report, mode ColorMode) error {
 		p.dim("pipeline:     "),
 		r.Stats.Raw, r.Stats.AfterDedup, r.Stats.AfterVerify, r.Stats.FalsePos,
 		p.bold("final"), len(r.Findings))
+	if r.Stats.RootCauses > 0 {
+		fmt.Fprintf(w, "%s %d\n", p.dim("root causes: "), r.Stats.RootCauses)
+	}
 
 	if len(r.Stats.BySeverity) > 0 {
 		fmt.Fprintf(w, "\n%s\n", p.bold("by severity:"))
@@ -66,16 +69,84 @@ func WriteTextWith(w io.Writer, r types.Report, mode ColorMode) error {
 
 	sorted := append([]types.Finding(nil), r.Findings...)
 	types.SortFindings(sorted)
+	grouped := reportGroups(r, sorted)
 
-	fmt.Fprintf(w, "\n%s\n", p.bold(fmt.Sprintf("findings (%d):", len(sorted))))
 	if len(sorted) == 0 {
+		fmt.Fprintf(w, "\n%s\n", p.bold("findings (0):"))
 		fmt.Fprintf(w, "  %s\n", p.green("(none — clean run)"))
 		return nil
 	}
-	for i, f := range sorted {
-		writeFinding(w, p, i+1, f)
+	fmt.Fprintf(w, "\n%s\n", p.bold(fmt.Sprintf("findings (%d root causes / %d occurrences):", len(grouped), len(sorted))))
+	for i, g := range grouped {
+		writeFindingGroup(w, p, i+1, g)
 	}
 	return nil
+}
+
+func reportGroups(r types.Report, sorted []types.Finding) []types.FindingGroup {
+	if len(r.Groups) > 0 {
+		groups := append([]types.FindingGroup(nil), r.Groups...)
+		sort.SliceStable(groups, func(i, j int) bool {
+			return types.LessFinding(groups[i].Primary, groups[j].Primary)
+		})
+		return groups
+	}
+
+	groups := make([]types.FindingGroup, 0, len(sorted))
+	for i, f := range sorted {
+		groups = append(groups, types.FindingGroup{
+			ID:              fmt.Sprintf("group-%03d", i+1),
+			Basis:           "location",
+			RuleID:          f.RuleID,
+			Title:           f.Title,
+			Agent:           f.Agent,
+			Severity:        f.Severity,
+			Confidence:      f.Confidence,
+			Score:           f.Score,
+			CWE:             f.CWE,
+			OWASP:           f.OWASP,
+			FileCount:       1,
+			OccurrenceCount: 1,
+			Primary:         f,
+			Occurrences: []types.FindingOccurrence{{
+				FindingID:     f.ID,
+				File:          f.File,
+				StartLine:     f.StartLine,
+				EndLine:       f.EndLine,
+				Confidence:    f.Confidence,
+				Score:         f.Score,
+				Verified:      f.Verified,
+				FalsePositive: f.FalsePositive,
+				DeepVerdict:   f.DeepVerdict,
+			}},
+		})
+	}
+	return groups
+}
+
+func writeFindingGroup(w io.Writer, p palette, idx int, g types.FindingGroup) {
+	writeFinding(w, p, idx, g.Primary)
+	label := func(k string) string { return p.dim(fmt.Sprintf("  %-9s", k)) }
+	if g.OccurrenceCount == 1 {
+		if g.Basis != "" && g.Basis != "location" {
+			fmt.Fprintf(w, "%s %s\n", label("grouped:"), g.Basis)
+		}
+		return
+	}
+	fmt.Fprintf(w, "%s %d occurrences across %d files (%s)\n",
+		label("grouped:"), g.OccurrenceCount, g.FileCount, g.Basis)
+	fmt.Fprintf(w, "%s\n", label("also at:"))
+	for _, occ := range g.Occurrences[1:] {
+		loc := fmt.Sprintf("%s:%d-%d", occ.File, occ.StartLine, occ.EndLine)
+		line := "    - " + p.cyan(loc)
+		if occ.Confidence != "" {
+			line += " " + p.dim("conf=") + p.confColor(string(occ.Confidence))
+		}
+		if occ.Score > 0 {
+			line += " " + p.dim(fmt.Sprintf("score=%.2f", occ.Score))
+		}
+		fmt.Fprintln(w, line)
+	}
 }
 
 //nolint:gocyclo // optional formatting branches per finding field

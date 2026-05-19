@@ -107,6 +107,8 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 		s.report.Stats.ByAgent[f.Agent]++
 	}
 	types.SortFindings(final)
+	s.report.Groups = buildFindingGroups(final)
+	s.report.Stats.RootCauses = len(s.report.Groups)
 	s.report.Findings = final
 	s.final = final
 	return nil

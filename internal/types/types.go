@@ -185,13 +185,14 @@ type ScanPlan struct {
 
 // Report aggregates all findings of a scan.
 type Report struct {
-	Target       string    `json:"target"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	FilesScanned int       `json:"files_scanned"`
-	Plan         ScanPlan  `json:"plan"`
-	Findings     []Finding `json:"findings"`
-	Stats        Stats     `json:"stats"`
+	Target       string         `json:"target"`
+	StartedAt    time.Time      `json:"started_at"`
+	FinishedAt   time.Time      `json:"finished_at"`
+	FilesScanned int            `json:"files_scanned"`
+	Plan         ScanPlan       `json:"plan"`
+	Findings     []Finding      `json:"findings"`
+	Groups       []FindingGroup `json:"groups,omitempty"`
+	Stats        Stats          `json:"stats"`
 }
 
 // Stats keeps high-level numbers for the final report.
@@ -200,11 +201,45 @@ type Stats struct {
 	AfterDedup  int               `json:"after_dedup"`
 	AfterVerify int               `json:"after_verify"`
 	FalsePos    int               `json:"false_positives"`
+	RootCauses  int               `json:"root_causes,omitempty"`
 	BySeverity  map[string]int    `json:"by_severity"`
 	ByAgent     map[string]int    `json:"by_agent"`
 	TokensIn    int               `json:"tokens_in,omitempty"`
 	TokensOut   int               `json:"tokens_out,omitempty"`
 	ContextPack *ContextPackStats `json:"context_pack,omitempty"`
+}
+
+// FindingOccurrence is one manifestation of a grouped root cause.
+type FindingOccurrence struct {
+	FindingID     string     `json:"finding_id,omitempty"`
+	File          string     `json:"file"`
+	StartLine     int        `json:"start_line"`
+	EndLine       int        `json:"end_line"`
+	Confidence    Confidence `json:"confidence,omitempty"`
+	Score         float64    `json:"score,omitempty"`
+	Verified      bool       `json:"verified,omitempty"`
+	FalsePositive bool       `json:"false_positive,omitempty"`
+	DeepVerdict   string     `json:"deep_verdict,omitempty"`
+}
+
+// FindingGroup collapses multiple similar findings into one root-cause view.
+// Primary carries the canonical representative finding used for rendering the
+// group in text reports.
+type FindingGroup struct {
+	ID              string              `json:"id"`
+	Basis           string              `json:"basis,omitempty"`
+	RuleID          string              `json:"rule_id,omitempty"`
+	Title           string              `json:"title"`
+	Agent           string              `json:"agent"`
+	Severity        Severity            `json:"severity"`
+	Confidence      Confidence          `json:"confidence,omitempty"`
+	Score           float64             `json:"score,omitempty"`
+	CWE             string              `json:"cwe,omitempty"`
+	OWASP           string              `json:"owasp,omitempty"`
+	FileCount       int                 `json:"file_count"`
+	OccurrenceCount int                 `json:"occurrence_count"`
+	Primary         Finding             `json:"primary"`
+	Occurrences     []FindingOccurrence `json:"occurrences"`
 }
 
 // ContextPackStats reports aggregate metrics about ContextPack assembly.

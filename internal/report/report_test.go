@@ -102,6 +102,7 @@ func TestWriteTextNoColor(t *testing.T) {
 		"fp=1",
 		"by severity:",
 		"by agent:",
+		"3 root causes / 3 occurrences",
 		"[CRITICAL]",
 		"[HIGH]",
 		"SQL Injection",
@@ -146,6 +147,61 @@ func TestWriteTextEmptyFindings(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "(none — clean run)") {
 		t.Errorf("expected clean run message; got %q", buf.String())
+	}
+}
+
+func TestWriteTextRendersFindingGroups(t *testing.T) {
+	r := sampleReport()
+	r.Stats.RootCauses = 2
+	r.Groups = []types.FindingGroup{
+		{
+			ID:              "group-001",
+			Basis:           "code_sample",
+			RuleID:          "sql-inj",
+			Title:           "SQL Injection",
+			Agent:           "injection",
+			Severity:        types.SevCritical,
+			Confidence:      types.ConfHigh,
+			FileCount:       2,
+			OccurrenceCount: 2,
+			Primary:         r.Findings[0],
+			Occurrences: []types.FindingOccurrence{
+				{FindingID: "f1", File: "a.go", StartLine: 10, EndLine: 12, Confidence: types.ConfHigh, Score: 0.98},
+				{FindingID: "f4", File: "b.go", StartLine: 22, EndLine: 24, Confidence: types.ConfMedium, Score: 0.81},
+			},
+		},
+		{
+			ID:              "group-002",
+			Basis:           "location",
+			RuleID:          "",
+			Title:           "Missing auth check",
+			Agent:           "auth",
+			Severity:        types.SevHigh,
+			Confidence:      types.ConfMedium,
+			FileCount:       1,
+			OccurrenceCount: 1,
+			Primary:         r.Findings[1],
+			Occurrences: []types.FindingOccurrence{
+				{FindingID: "f2", File: "b.go", StartLine: 5, EndLine: 5, Confidence: types.ConfMedium},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteTextWith(&buf, r, ColorNever); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"root causes:  2",
+		"findings (2 root causes / 3 occurrences):",
+		"2 occurrences across 2 files (code_sample)",
+		"also at:",
+		"b.go:22-24",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in grouped output:\n%s", want, out)
+		}
 	}
 }
 
