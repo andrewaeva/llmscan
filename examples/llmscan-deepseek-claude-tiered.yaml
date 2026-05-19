@@ -22,8 +22,27 @@ default_model:
   temperature: 0.1
   max_tokens: 4096
 
-# T3 — точные финальные фильтры на Sonnet 4.6
+# 3 укрупнённых скан-агента вместо 15 узких — все идут на DeepSeek (default).
 agents:
+  # Старые узкие сканеры выключены
+  injection:         {enabled: false}
+  auth:              {enabled: false}
+  crypto:            {enabled: false}
+  deserialization:   {enabled: false}
+  ssrf:              {enabled: false}
+  generic:           {enabled: false}
+  insecure-defaults: {enabled: false}
+  race-conditions:   {enabled: false}
+  error-handling:    {enabled: false}
+  supply-chain:      {enabled: false}
+  memory-safety:     {enabled: false}
+
+  # Новые укрупнённые скиллы (см. skills/{web-app,crypto-secrets,runtime-safety}/SKILL.md)
+  web-app:           {enabled: true}
+  crypto-secrets:    {enabled: true}
+  runtime-safety:    {enabled: true}
+
+  # T3 — точные финальные фильтры на Sonnet 4.6
   plan_verifier:
     enabled: true
     model:
