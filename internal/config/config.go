@@ -223,6 +223,8 @@ type DeepConfig struct {
 	Cache        bool   `yaml:"cache,omitempty"`          // cache tool outputs in sqlite; default true
 	Model        string `yaml:"model,omitempty"`          // override LLM model id (empty = use default)
 	Provider     string `yaml:"provider,omitempty"`       // override provider (empty = use default)
+	BaseURL      string `yaml:"base_url,omitempty"`       // override API base URL (empty = use default)
+	APIKeyEnv    string `yaml:"api_key_env,omitempty"`    // override API key env var (empty = use default)
 	MaxFileBytes int    `yaml:"max_file_bytes,omitempty"` // sandbox guard; default 512 KiB
 
 	// Debate enables a proponent/opponent cross-examination pass after the

@@ -62,6 +62,12 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 	if cfg.Provider != "" {
 		spec.Provider = cfg.Provider
 	}
+	if cfg.BaseURL != "" {
+		spec.BaseURL = cfg.BaseURL
+	}
+	if cfg.APIKeyEnv != "" {
+		spec.APIKeyEnv = cfg.APIKeyEnv
+	}
 	rawClient, err := llm.New(spec)
 	if err != nil {
 		e.logf("deep: llm init failed: %v (deep skipped)", err)

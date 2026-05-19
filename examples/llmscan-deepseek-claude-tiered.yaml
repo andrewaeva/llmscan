@@ -1,0 +1,69 @@
+# Tiered scan: DeepSeek V3.2 (Eliza) для широкого скана + Claude Sonnet 4.6
+# (Eliza) для подтверждения находок и deep tool-loop.
+#
+# T1+T2 (DeepSeek V3.2): orchestrator, context_filter, error-handling,
+#   supply-chain, injection, auth, crypto, deserialization, ssrf, generic,
+#   insecure-defaults, memory-safety, race-conditions, reflexion, refiner
+# T3+T4 (Sonnet 4.6): plan_verifier, verifier, fp_filter, deep, debater
+#
+# ENV:
+#   OPENAI_API_KEY=<eliza-deepseek-soy-token>
+#   ANTHROPIC_API_KEY=<eliza-anthropic-token>
+#
+# Запуск:
+#   llmscan scan --config examples/llmscan-deepseek-claude-tiered.yaml --deep <path>
+
+# Default = DeepSeek V3.2 через Eliza. Все agents без override тоже идут сюда.
+default_model:
+  provider: openai
+  model: default
+  base_url: https://api.eliza.yandex.net/internal/deepseek-v3-1-terminus/v1
+  api_key_env: OPENAI_API_KEY
+  temperature: 0.1
+  max_tokens: 4096
+
+# T3 — точные финальные фильтры на Sonnet 4.6
+agents:
+  plan_verifier:
+    enabled: true
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      base_url: https://api.eliza.yandex.net/raw/anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.1
+      max_tokens: 4096
+  verifier:
+    enabled: true
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      base_url: https://api.eliza.yandex.net/raw/anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.1
+      max_tokens: 4096
+  fp_filter:
+    enabled: true
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      base_url: https://api.eliza.yandex.net/raw/anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.1
+      max_tokens: 4096
+
+# T4 — deep + debate на Sonnet 4.6 (требует tool-calling)
+deep:
+  enabled: true
+  model: claude-sonnet-4-6
+  provider: anthropic
+  base_url: https://api.eliza.yandex.net/raw/anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  debate: true
+
+# Eliza Anthropic держит низкий inflight, поэтому общий лимит умеренный.
+llm:
+  inflight_limit: 8
+  max_retries: 6
+  retry_base_delay_ms: 1000
+  retry_max_delay_ms: 30000
