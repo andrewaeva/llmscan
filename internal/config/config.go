@@ -257,9 +257,22 @@ type Config struct {
 	ASTCache  ASTCacheConfig  `yaml:"ast_cache"`
 	Baseline  BaselineConfig  `yaml:"baseline"`
 	Deep      DeepConfig      `yaml:"deep"`
+	Recon     ReconConfig     `yaml:"recon,omitempty"`
 
 	// Free-form context that gets injected into agent prompts.
 	ProjectContext string `yaml:"project_context,omitempty"`
+}
+
+// ReconConfig controls the pre-scan architecture mapping stage. When enabled,
+// llmscan samples top-level / entry-point files, asks the LLM to produce a
+// concise architecture document, persists it to .llmscan/architecture.md and
+// prepends it to the project context so scanners reason with shared scope.
+type ReconConfig struct {
+	Enabled  bool   `yaml:"enabled,omitempty"`   // default: off
+	MaxFiles int    `yaml:"max_files,omitempty"` // sampling cap (default 40)
+	MaxBytes int    `yaml:"max_bytes,omitempty"` // corpus size cap (default 60_000)
+	Reuse    bool   `yaml:"reuse,omitempty"`     // reuse existing architecture.md if present (default true)
+	Agent    string `yaml:"agent,omitempty"`     // ResolveModel key, default "recon"
 }
 
 // Confidence (string alias to avoid import cycles with types).

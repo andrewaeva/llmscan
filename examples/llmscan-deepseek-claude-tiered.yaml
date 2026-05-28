@@ -80,6 +80,16 @@ deep:
   api_key_env: ANTHROPIC_API_KEY
   debate: true
 
+# Recon — одноразовый проход до скана: строит architecture.md (entry points,
+# trust boundaries, stack, attack surface) и подмешивает в ProjectContext.
+# Работает на дешёвом (DeepSeek) — всего один вызов на репо.
+recon:
+  enabled: true
+  max_files: 40
+  max_bytes: 60000
+  reuse: true   # повторные сканы берут architecture.md из кэша
+  agent: recon  # ResolveModel ключ — можно переопределить в agents.recon
+
 # Eliza Anthropic держит низкий inflight, поэтому общий лимит умеренный.
 llm:
   inflight_limit: 8
