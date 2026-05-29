@@ -34,13 +34,26 @@ func (e *Engine) runRefinePass(ctx context.Context, findings []types.Finding, ch
 		return findings
 	}
 
+	refinable := 0
+	for _, g := range groups {
+		if shouldRefineGroup(g) {
+			refinable++
+		}
+	}
+	e.prog().Stage("refine", refinable)
+	defer e.prog().Done("refine")
+
 	out := make([]types.Finding, 0, len(findings))
 	processed := make(map[string]struct{}, len(groups))
 	for i, f := range findings {
 		if _, done := processed[f.File]; done {
 			continue
 		}
+		before := len(processed)
 		out = e.appendRefineGroup(ctx, out, processed, groups, refiner, i, f)
+		if g := groups[f.File]; g != nil && shouldRefineGroup(g) && len(processed) > before {
+			e.prog().Inc("refine", 1)
+		}
 	}
 	return out
 }
