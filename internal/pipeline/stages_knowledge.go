@@ -48,6 +48,7 @@ func stageWriteKnowledge(ctx context.Context, e *Engine, s *runState) error {
 		e.logf("knowledge: writer disabled: %v", err)
 		return nil
 	}
+	client = llm.Tag(client, "knowledge")
 	prev, _ := knowledge.Load(s.target)
 	layout, lerr := knowledge.CollectLayout(s.target, 60)
 	if lerr != nil {

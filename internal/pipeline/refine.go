@@ -97,7 +97,7 @@ func (e *Engine) newRefiner() (*agents.Refiner, bool) {
 		return nil, false
 	}
 	return &agents.Refiner{
-		Client:      cl,
+		Client:      llm.Tag(cl, "refine"),
 		MaxFindings: e.Cfg.Precision.RefineMaxFindings,
 		Verbose:     e.Verbose,
 		Logf:        e.logf,

@@ -78,6 +78,12 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 		e.logf("deep: provider %s does not support tool-calling (deep skipped)", spec.Provider)
 		return findings
 	}
+	// Tag tc for the deep tool-loop. Debate is tagged separately below from
+	// the untagged rawClient so its plain Complete calls don't double-emit a
+	// 'deep' log entry.
+	if tagged, ok := llm.Tag(tc, "deep").(llm.ToolClient); ok {
+		tc = tagged
+	}
 
 	// 3) Pick hotspots from final findings: severity >= threshold, not FP, not
 	//    suppressed. Sort by severity (worst first), then file:line, cap.
@@ -163,7 +169,7 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 		for _, h := range hotspots {
 			indices = append(indices, h.index)
 		}
-		e.runDebatePass(ctx, rawClient, findings, indices)
+		e.runDebatePass(ctx, llm.Tag(rawClient, "debate"), findings, indices)
 	}
 	return findings
 }

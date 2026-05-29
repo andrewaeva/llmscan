@@ -74,6 +74,9 @@ type scanFlags struct {
 
 	// LLM transport (global inflight cap + retry)
 	inflightLimit int
+
+	// LLM call debug log (JSONL per Complete).
+	llmLog string
 }
 
 func scanCmd() *cobra.Command {
@@ -99,6 +102,15 @@ func runScan(target string, f *scanFlags) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if f.llmLog != "" {
+		sink, err := llm.NewFileSink(f.llmLog)
+		if err != nil {
+			return fmt.Errorf("open --llm-log: %w", err)
+		}
+		llm.SetSink(sink)
+		defer func() { _ = llm.CloseSink() }()
+	}
 
 	eng, reporter, err := newScanEngine(cfg, f)
 	if err != nil {
@@ -373,4 +385,7 @@ func bindScanFlags(cmd *cobra.Command, f *scanFlags) {
 
 	// LLM transport.
 	cmd.Flags().IntVar(&f.inflightLimit, "inflight-limit", -1, "Max concurrent LLM HTTP requests across all agents (0=unlimited; overrides config). Use when scanning through a rate-limited proxy.")
+
+	// LLM call debug log.
+	cmd.Flags().StringVar(&f.llmLog, "llm-log", "", "Write one JSONL row per LLM Complete call to this path (stage, model, tokens, latency). Use `llmcost` to aggregate.")
 }

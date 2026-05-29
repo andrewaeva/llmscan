@@ -209,7 +209,7 @@ func (e *Engine) planStep(ctx context.Context, target string, files []types.File
 		e.logf("orchestrator: %v (using fallback plan, focus=all %d agents)", err, len(fp.Focus))
 		return fp, err
 	}
-	orch := &agents.Orchestrator{Client: client}
+	orch := &agents.Orchestrator{Client: llm.Tag(client, "orchestrator")}
 	plan, err := orch.Plan(ctx, target, files, e.Cfg.ProjectContext)
 	if err != nil {
 		fp := fallbackPlan(files, g)
