@@ -162,6 +162,25 @@ deep:
 После каждого прогона llmscan всегда дублирует финальный отчёт в
 `<target>/.llmscan/last-report.txt` (без ANSI) и
 `<target>/.llmscan/last-report.json` (полная JSON-сериализация, без обрезаний).
+
+### Stage snapshots (воронка пайплайна)
+
+Помимо финального отчёта, после каждого прогона llmscan кладёт в
+`<target>/.llmscan/stages/` 4 JSON-снапшота на ключевых точках воронки
+плюс компактный `stages-summary.txt` с атрибуцией дропов:
+
+| Файл | Что внутри |
+|---|---|
+| `stages/01-raw.json` | findings сразу после scanners + dedup (до verifier) |
+| `stages/02-verified.json` | после verifier (gates + rationale), до fp_filter |
+| `stages/03-confirmed.json` | после fp_filter + suppressions + secret-drop, до refine/deep/debate |
+| `stages/04-final.json` | финал — то же что в `last-report.json` |
+| `stages/stages-summary.txt` | воронка с числами по стадиям + список каждого дропнутого finding'а с указанием **на какой стадии** он отвалился (`drop_secret`, `suppressed`, `refine`, `drop_unconfirmed`, `drop_impact_fail`, `policy`, `baseline`) |
+
+Когда финальный отчёт пустой (`final = 0`), а у тебя в логах было
+«verified = 13 fp = 5» — открой `stages/stages-summary.txt`: там видно куда
+делись эти 13. Когда хочется глазами посмотреть на конкретный finding —
+`jq '.findings[] | select(.rule_id == "...")' stages/02-verified.json`.
 Это надёжный fallback на случай если TUI или скролл терминала перекрыл часть
 findings. Дополнительная копия в произвольный путь — через `--report-file PATH`.
 

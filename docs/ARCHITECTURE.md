@@ -103,7 +103,8 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 14 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
 | 15 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
 | 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, `dropSecretFindings` (safety-net: любой finding с "secret" в `RuleID`/`Agent` отбрасывается), **refine** (map-reduce reducer по file, бар `refine N/M`), reachability downgrade, calibration, baseline, **deep** (`deep N/M`) + **debate** (`debate N/M`) pass, `dropUnconfirmedFindings` (отбрасывает finding, если и verifier, и deep вернули `inconclusive`/пусто), `dropImpactFailFindings` (отбрасывает finding с `impact gate = fail` — verifier явно сказал «no security impact»), stats |
-| 17 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
+| 17 | `write-stages` | `stages_save.go` | — | пишет 4 JSON-снапшота (`01-raw`, `02-verified`, `03-confirmed`, `04-final`) + `stages-summary.txt` в `<target>/.llmscan/stages/`; в summary — воронка с числами по стадиям и атрибуции дропов на базе `runState.dropReasons` |
+| 18 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
 

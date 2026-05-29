@@ -48,6 +48,7 @@ func (e *Engine) stages() []stage {
 		{name: "dag-build", run: stageBuildDAG},
 		{name: "scanners", run: stageRunDAG},
 		{name: "post-process", run: stagePostProcess},
+		{name: "write-stages", run: stageWriteStages},
 		{name: "write-knowledge", run: stageWriteKnowledge},
 	}
 }
@@ -59,7 +60,12 @@ func (e *Engine) Run(ctx context.Context, target string) (types.Report, error) {
 		StartedAt: time.Now(),
 		Stats:     types.Stats{BySeverity: map[string]int{}, ByAgent: map[string]int{}},
 	}
-	st := &runState{target: target, report: &report}
+	st := &runState{
+		target:      target,
+		report:      &report,
+		dropReasons: map[string]string{},
+		stageCounts: map[string]int{},
+	}
 
 	// astCache is opened in stageOpenASTCache and must be closed last, before
 	// the cache DB (which is opened in stageOpenCache).
