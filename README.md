@@ -36,6 +36,21 @@ go build -o llmscan ./cmd/llmscan
 Для reasoning-моделей (`gpt-5*`, `o1/o3/o4`) клиент автоматически использует
 `max_completion_tokens` и опускает `temperature`.
 
+### Tiered модели (дешёвая + точная)
+
+Каждый агент может иметь свою модель — `agents.<name>.model` перебивает
+`default_model`. Готовые примеры в `examples/`:
+
+| Файл | Стратегия |
+|---|---|
+| `examples/llmscan-fast.yaml` | всё на одной дешёвой модели (CI / smoke) |
+| `examples/llmscan-claude-tiered.yaml` | Claude Sonnet 4.6 на всех агентах через единый прокси |
+| `examples/llmscan-deepseek-claude-tiered.yaml` | DeepSeek V3.2 на bulk-сканерах (T1+T2), Claude Sonnet 4.6 на verifier/refine/deep/debate (T3+T4) |
+
+Deep-agent умеет ходить в свой base_url/key через `deep.base_url` +
+`deep.api_key_env` — это даёт смешать провайдеров без сюрпризов
+(deep на Claude, scanners на DeepSeek и т.п.).
+
 ## Быстрый старт
 
 ```bash
@@ -125,10 +140,24 @@ deep:
 | `--no-{watchlist,symexpand,taint,reachability,cache,ast-cache}` | выключить слои |
 | `--agent-parallel N`, `--concurrency N` | параллелизм |
 | `--report-file PATH` | сохранить текстовый отчёт в файл (в дополнение к stdout) |
-| `--no-tui` | отключить прогресс-TUI (эквивалент `--progress=plain`) — для CI и для отладки |
+| `--no-tui` | отключить прогресс-TUI (эквивалент `--progress=plain`) — для CI, для отладки и для remote VM где ANSI-escape ломаются (tmux, SSH без полноценного PTY) |
 | `--inflight-limit N` | глобальный cap concurrent LLM-запросов (0 = без лимита). Используй когда между llmscan и провайдером стоит прокси с жёстким inflight-лимитом (Eliza и т.п.) |
+| `--llm-log PATH` | пишет одну JSONL-строку на каждый Complete: `stage`, `model`, `tokens_in/out`, `latency_ms`, `ok/error`. Скармливается `llmscan cost` для статистики и оценки $$$ (см. ниже) |
 
 Полный список — `./llmscan scan --help`.
+
+### Прогресс-бары post-process
+
+Пока `scanners N/M` доходит до конца, post-process иногда занимает дольше
+самого скана. Чтобы фаза не выглядела «зависшей», каждый под-проход теперь
+рисует свой бар:
+
+```
+✓ scanners            953/953   12m
+▶ refine               45/120    →  map-reduce dedup по файлам
+▶ deep                  7/28     →  tool-loop верификация hotspot'ов
+▶ debate                3/28     →  proponent ↔ opponent для split-кейсов
+```
 
 После каждого прогона llmscan всегда дублирует финальный отчёт в
 `<target>/.llmscan/last-report.txt` (без ANSI) и
@@ -171,9 +200,22 @@ AST-кеш sqlite (`.llmscan/ast-cache.db`) включён по умолчани
 Каждый — `skills/<name>/SKILL.md` с YAML-фронтматтером и промптом;
 подгружаются динамически.
 
-**Code:** `injection`, `auth`, `crypto`, `deserialization`, `ssrf`,
-`generic`, `insecure-defaults`, `race-conditions`, `error-handling`,
-`supply-chain`, `memory-safety`.
+**Broad-coverage skills (default, 3 шт.):** широкие сканеры, каждый покрывает
+несколько узких CWE-категорий — меньше отдельных LLM-вызовов на чанк, дешевле
+на большом репо:
+
+- `web-app` — injection, auth/authz, SSRF, deserialization, path traversal,
+  open redirect.
+- `crypto-secrets` — слабые/устаревшие crypto-примитивы, секреты, insecure
+  defaults, supply-chain (зависимости/lockfiles).
+- `runtime-safety` — race conditions, error-handling, memory safety,
+  resource leaks.
+
+**Legacy узкие скиллы** остаются для тонкого тюнинга и обратной совместимости:
+`injection`, `auth`, `crypto`, `deserialization`, `ssrf`, `generic`,
+`insecure-defaults`, `race-conditions`, `error-handling`, `supply-chain`,
+`memory-safety`. Их можно включать выборочно через `orchestrator` (focus list)
+или через явный enabled-список агентов.
 
 **IaC** (auto-enabled по filetype): `iac-docker`, `iac-k8s`, `iac-terraform`,
 `iac-ghactions`.
@@ -200,6 +242,58 @@ rule-id подавляет любой rule.
 ```
 
 Fingerprint = `sha256(rule_id|agent|file|normalized_code)[:16]`.
+
+## Cost / token statistics
+
+Когда нужно понять, куда уходят токены и деньги — запусти скан с `--llm-log`,
+а потом агрегируй командой `llmscan cost`:
+
+```bash
+./llmscan scan ./repo --llm-log .llmscan/calls.jsonl
+
+# 1) без цен — только токены, латенси, error rate
+./llmscan cost --log .llmscan/calls.jsonl
+
+# 2) c прайс-листом — добавляется колонка USD, строки отсортированы по $$$
+cat > prices.yaml <<EOF
+models:
+  claude-sonnet-4-6: { input: 3.0,  output: 15.0 }
+  deepseek-v3.2:     { input: 0.27, output: 1.10 }
+  default:           { input: 1.0,  output: 3.0 }
+EOF
+./llmscan cost --log .llmscan/calls.jsonl --prices prices.yaml
+./llmscan cost --log .llmscan/calls.jsonl --prices prices.yaml --json | jq .
+```
+
+Эмитятся stages: `orchestrator`, `scanner.<agent>` (по одному ряду на каждого
+сканера), `verifier`, `fp_filter`, `context_filter`, `refine`, `recon`,
+`knowledge`, `deep`, `debate`. Pricing — USD за 1M токенов; ключ `default`
+работает как fallback для незнакомых моделей.
+
+Пример вывода:
+
+```
+STAGE              MODEL              CALLS  ERR  TOK_IN   TOK_OUT  AVG_MS  USD
+deep               claude-sonnet-4-6  28     1    420,000  84,000   58000   $2.5200
+scanner.injection  claude-sonnet-4-6  280    0    1,260M   84,000   1100    $5.0400
+orchestrator       claude-sonnet-4-6  1      0    8,000    2,000    3200    $0.0540
+```
+
+## Recon (pre-scan architecture)
+
+Опционально: до орчестратора прогон семплирует entry-points + config +
+shallow-файлы и одним LLM-вызовом генерит коротенький architecture-doc.
+Получившийся документ префиксится к `ProjectContext` и идёт во все
+последующие промпты — orchestrator выбирает focus с большим пониманием
+кодовой базы, scanners видят high-level контекст. Off by default; включается
+блоком `recon:` в yaml (см. `examples/llmscan-deepseek-claude-tiered.yaml`).
+
+```yaml
+recon:
+  enabled: true
+  max_bytes: 16384       # верхняя граница на размер сгенерённого doc-а
+  sample_files: 40       # сколько файлов засемплить для модели
+```
 
 ## Eval
 
@@ -247,6 +341,23 @@ CLI: `--inflight-limit N` перебивает yaml. На каждом ретр�
   "gates": {"control":"pass","validation":"fail","impact":"pass"}
 }
 ```
+
+## Отладка / Troubleshooting
+
+- **TUI ломается на remote VM** (рамка дублируется, прогресс «прыгает»):
+  ANSI-escape не дошли через SSH/tmux. Запусти с `--no-tui` или `--progress=plain`;
+  для долгих сканов — внутри `tmux new -s scan` с `TERM=xterm-256color`.
+- **Скан «зависает» на 86%, scanners доехали до N/N**: это post-process
+  крутит refine → deep → debate. Теперь видно отдельными барами
+  (`refine N/M`, `deep N/M`, `debate N/M`). Если хочется ещё больше деталей —
+  `--verbose` плюс `--llm-log` дадут поминутный таймлайн.
+- **Куда уходят токены и деньги**: `--llm-log path.jsonl` + `llmscan cost`
+  (см. секцию «Cost / token statistics» выше).
+- **plan_verifier выдаёт «invalid character after top-level value»**:
+  починено через brace-aware ExtractJSON + `llm.CompleteJSON` retry с
+  коррекцией (см. `internal/llm/json.go`).
+- **Известный failing test** в `internal/vcs`: `TestArcMethodsReturnUnsupportedWithoutCLI`
+  падает на машине где установлен `arc` CLI (Yandex Arc). Не блокирующий.
 
 ## Development
 
