@@ -106,19 +106,19 @@ Each step must be one sentence and reference a tool when possible
 (read_file/read_symbol/find_callers/find_callees/list_imports/grep).`,
 		mustJSON(f), contextSnippet, maxSteps)
 
-	resp, err := p.Planner.Complete(ctx, llm.Request{
+	resp, raw, err := llm.CompleteJSON(ctx, p.Planner, llm.Request{
 		System:   system,
 		Messages: []llm.Message{{Role: "user", Content: user}},
-		JSON:     true,
-	})
+	}, 2)
 	if err != nil {
 		return nil, err
 	}
+	_ = resp
 	var pj struct {
 		Steps []string `json:"steps"`
 	}
-	if err := json.Unmarshal([]byte(llm.ExtractJSON(resp.Text)), &pj); err != nil {
-		return nil, fmt.Errorf("plan_verifier: planner decode: %w; raw=%q", err, truncate(resp.Text, 200))
+	if err := json.Unmarshal(raw, &pj); err != nil {
+		return nil, fmt.Errorf("plan_verifier: planner decode: %w; raw=%q", err, truncate(string(raw), 200))
 	}
 	// Trim & cap.
 	out := make([]string, 0, len(pj.Steps))
