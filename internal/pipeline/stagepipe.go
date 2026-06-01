@@ -76,6 +76,20 @@ type runState struct {
 	// Final findings.
 	final []types.Finding
 
+	// Stage snapshots written to <target>/.llmscan/stages/. Captured at the
+	// canonical funnel points so we can render a drop-attribution summary
+	// even when the final report is empty.
+	snapRaw       []types.Finding // scanners output after dedup, before verifier
+	snapVerified  []types.Finding // after verifier, before fp_filter
+	snapConfirmed []types.Finding // after fp_filter, before refine/deep/debate/drops
+	snapFinal     []types.Finding // == final
+
+	// dropReasons[finding-id] = stage that removed it, in order of first drop.
+	dropReasons map[string]string
+
+	// stageCounts['raw'|'dedup'|...] for the funnel summary.
+	stageCounts map[string]int
+
 	// ContextPack telemetry (populated by stageBuildContextPacks when
 	// scan.context.enabled = true).
 	cpStats   types.ContextPackStats

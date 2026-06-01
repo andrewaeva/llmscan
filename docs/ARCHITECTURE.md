@@ -74,7 +74,9 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | Tools | `internal/tools` | sandbox для deep-агента (read_file/grep/list_dir/blame) |
 | Tokens | `internal/tokens` | tokenizers для бюджетирования |
 | DAG | `internal/dag` | layered parallel DAG runner |
-| Progress | `internal/progress` | tty-прогресс |
+| Progress | `internal/progress` | tty-прогресс (multi-stage TUI: scanners + refine + deep + debate) |
+| Recon | `internal/recon` | семплирует entry-points + config + shallow-файлы, одним LLM-вызовом генерит architecture-doc для `ProjectContext` |
+| LLM log | `internal/llm/log.go` | JSONL-строка на каждый Complete (stage, model, tokens, latency); Sink + `Tag(client, stage)` + `WithStage(ctx, tag)` |
 | Util | `internal/util` | Walk/WalkScoped, IsExcluded, LanguageOf |
 | Types | `internal/types` | Finding, Report, Stats, FileTarget, ScanPlan |
 
@@ -92,6 +94,7 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 6 | `taint` | `stages_static.go` | `!Taint` | intra-file taint трассировки |
 | 7 | `interproc` | `stages_static.go` | `!Taint || !InterProc` | call-graph + function summaries + IFDS-light |
 | 8 | `load-knowledge` | `stages_static.go` | — | читает `<target>/.llmscan/knowledge.md` (≤ 8 KB) для инъекции в orchestrator-промпт |
+| 8a | `recon` | `stages_recon.go` | `!Recon.Enabled` | семплирует entry-points + config + shallow-файлы (`recon.sample_files`) и одним LLM-вызовом пишет architecture-doc (≤ `recon.max_bytes`), который префиксится к `ProjectContext` — orchestrator и scanners видят высокоуровневый контекст |
 | 9 | `orchestrator` | `stages_static.go` | — | LLM-планировщик: focus агентов + priority файлов; здесь же загружаются few-shot banks |
 | 10 | `rag` | `stages_static.go` | `!RAG.Enabled` | embeddings или keyword index |
 | 11 | `cache` | `stages_static.go` | — | открывает SQLite-кэш вердиктов LLM |
@@ -99,8 +102,9 @@ LLM-multi-agent SAST поверх детерминированных слоёв.
 | 13 | `context-pack` | `stages_chunk.go` | — | для каждого чанка строит Pack (callees/callers/types/sanitizers/siblings/RAG/consts), overflow → split, до 4 раундов |
 | 14 | `dag-build` | `stages_scan.go` | — | строит DAG агентов: scanners → verifier → fp_filter; verifier = PlanVerifier с fallback |
 | 15 | `scanners` | `stages_scan.go` | — | параллельно прогоняет DAG, опционально N-of-K voting + Reflexion-обертка для белого списка скиллов |
-| 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, `dropSecretFindings` (safety-net: любой finding с "secret" в `RuleID`/`Agent` отбрасывается), **refine** (map-reduce reducer по file), reachability downgrade, calibration, baseline, **deep+debate** pass, `dropUnconfirmedFindings` (отбрасывает finding, если и verifier, и deep вернули `inconclusive`/пусто), `dropImpactFailFindings` (отбрасывает finding с `impact gate = fail` — verifier явно сказал «no security impact»), stats |
-| 17 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
+| 16 | `post-process` | `postprocess.go` | — | dedupe, suppress, `dropSecretFindings` (safety-net: любой finding с "secret" в `RuleID`/`Agent` отбрасывается), **refine** (map-reduce reducer по file, бар `refine N/M`), reachability downgrade, calibration, baseline, **deep** (`deep N/M`) + **debate** (`debate N/M`) pass, `dropUnconfirmedFindings` (отбрасывает finding, если и verifier, и deep вернули `inconclusive`/пусто), `dropImpactFailFindings` (отбрасывает finding с `impact gate = fail` — verifier явно сказал «no security impact»), stats |
+| 17 | `write-stages` | `stages_save.go` | — | пишет 4 JSON-снапшота (`01-raw`, `02-verified`, `03-confirmed`, `04-final`) + `stages-summary.txt` в `<target>/.llmscan/stages/`; в summary — воронка с числами по стадиям и атрибуции дропов на базе `runState.dropReasons` |
+| 18 | `write-knowledge` | `stages_static.go` | — | обновляет `<target>/.llmscan/knowledge.md` авто-саммари по частым rule_id × file |
 
 `runState` (внутренний state-bag) проходит через все стадии и содержит: files, prioritized, chunks, astByPath, depgraph, callgraph, taint, suppressions, plan, scanCtx (chunks + packsByChunkKey + index), cpBuilder, cacheDB, report.
 
@@ -226,6 +230,61 @@ CLI: `--inflight-limit N` (приоритет над yaml). YAML-секция: `
 до `max(2, InflightLimit)`: дальнейший fan-out агентов только увеличивает
 очередь у семафора без выигрыша в пропускной способности.
 
+## LLM call logging и cost attribution
+
+Структурированный след всех LLM-вызовов живёт в `internal/llm/log.go`:
+
+- `LogEntry` — одна JSONL-строка на `Complete` (и `CompleteWithTools`): `ts`,
+  `stage`, `provider`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `ok`,
+  `error`, `msg_count`, `json_mode`.
+- `Sink` интерфейс; реализация `NewFileSink(path)` выводит JSONL в файл под
+  mutex. `SetSink` / `CloseSink` управляют процесс-wide sink один раз.
+- `Tag(client, stage)` — внешний wrapper над `Client`; если исходник реализует
+  `ToolClient`, возвращает `loggingToolClient` с тех же capabilities.
+- `WithStage(ctx, tag)` — переопределяет stage из `ctx` (бьёт статический tag).
+
+Call-sites тэгируются один раз в момент создания клиента:
+
+| Stage tag | Кто тэгирует |
+|---|---|
+| `orchestrator` | `stages.go::stageOrchestrator` |
+| `recon` | `stages_recon.go::stageRecon` |
+| `knowledge` | `stages_knowledge.go::stageWriteKnowledge` |
+| `scanner.<agent>` | `dag_build.go::buildDAG` (по одному client на сканер) |
+| `context_filter` | `dag_build.go` |
+| `verifier` | `dag_build.go` (клиент расшарен между PlanVerifier и обычным Verifier) |
+| `fp_filter` | `dag_build.go` |
+| `refine` | `refine.go::newRefiner` |
+| `deep` | `deep.go::runDeepPass` (тэг на `tc` — ToolClient для tool-loop) |
+| `debate` | `deep.go::runDebatePass` (отдельный `Tag(rawClient, "debate")` чтобы не двоить запись вместе с deep) |
+
+Агрегатор — `cmd/llmscan/cost.go` (субкоманда `llmscan cost --log calls.jsonl [--prices prices.yaml] [--json]`).
+Группирует по (stage, model), считает `calls`, `errors`, `tokens_in/out`,
+`avg_latency_ms` и (при наличии прайс-листа) `usd`. Сортировка: USD desc →
+токены desc → stage → model. Схема прайс-листа — USD за 1M токенов; ключ
+`default` работает как fallback для незнакомых моделей.
+
+Включение: `--llm-log PATH` в `scan`. Когда флаг пуст — sink не создаётся и
+оверхеда нет. Сбои sink никогда не валят реальный LLM-вызов.
+
+## Progress reporting
+
+`internal/progress` — multi-stage TUI. API:
+
+- `Stage(name string, total int)` — регистрирует новый бар (`total=0` —
+  indeterminate режим).
+- `Inc(name, delta)` / `SetTotal(name, total)` — инкремент и переоценка.
+- `Done(name)` — закрывает бар галочкой.
+
+Стадии, которые видны пользователю:
+`discover`, `parse-ast`, `watchlist`, `taint`, `interproc`, `chunk`,
+`context-pack`, `scanners`, `refine`, `deep`, `debate`. Раньше post-process был
+одним сплошным баром «post-process» без total — сейчас разбит на три реальных
+прохода с известными счётчиками.
+
+`--no-tui` / `--progress=plain` переключается в plain-mode (`stages_*` пишут
+в stderr построчные логи) — обязательно на remote VM, в CI и когда stdout не tty.
+
 ## Конфиденс и калибровка
 
 `pipeline/confidence.go` — детерминистический пересчёт confidence на основе:
@@ -279,7 +338,8 @@ CLI: `--inflight-limit N` (приоритет над yaml). YAML-секция: `
 
 ## Точки расширения
 
-- **Новый scanner** — добавить `skills/<name>/SKILL.md` (description, scope, prompt). Подхватывается автоматически.
+- **Новый scanner** — добавить `skills/<name>/SKILL.md` (description, scope, prompt). Подхватывается автоматически. Для дешёвых прогонов предпочтительно добавлять в один из broad skills (`web-app` / `crypto-secrets` / `runtime-safety`), а не плодить узкие — каждый дополнительный сканер умножает LLM-вызовы на чанк.
+- **Новый LLM-call stage** — обернуть клиент в `llm.Tag(c, "my-stage")` в момент создания. Появится в `--llm-log` и в `llmscan cost` без других правок.
 - **Новый stage** — функция `func(ctx, e, s) error` + одна строка в `Engine.stages()`.
 - **Новый LLM-провайдер** — реализация интерфейса в `internal/llm`.
 - **Новый VCS** — реализация `vcs.VCS` (kind/Root/ChangedFiles).

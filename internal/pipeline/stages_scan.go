@@ -60,9 +60,39 @@ func stageRunDAG(ctx context.Context, e *Engine, s *runState) error {
 func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	e.prog().Stage("post-process", 0)
 	final := pickFinalFindings(s.outputs, s.report)
+
+	// Snapshot: state of findings at each gate of the funnel. Captured here
+	// (post-dedup, pre-secret-drop) to feed .llmscan/stages/*.json renderers.
+	if verified, ok := s.outputs["verifier"].([]types.Finding); ok {
+		s.snapVerified = cloneFindings(verified)
+	}
+	// snapRaw is the dedup output (pre-verifier).
+	if dedup, ok := s.outputs["dedup"].([]types.Finding); ok {
+		s.snapRaw = cloneFindings(dedup)
+	} else if raw, ok := s.outputs["scan_aggregate"].([]types.Finding); ok {
+		s.snapRaw = cloneFindings(raw)
+	}
+	s.stageCounts["raw"] = s.report.Stats.Raw
+	s.stageCounts["dedup"] = s.report.Stats.AfterDedup
+	s.stageCounts["verified"] = s.report.Stats.AfterVerify
+
+	preSecret := byID(final)
 	final = dropSecretFindings(final)
+	markDropped(s, preSecret, final, "drop_secret")
+
+	preSuppress := byID(final)
 	e.applySuppressions(final, s.suppressions)
+	markDropped(s, preSuppress, final, "suppressed")
+
+	// At this point 'final' is the fp_filter output minus secret/suppressed.
+	// That's our 'confirmed' snapshot — before refine/deep/debate/drop policies
+	// have had a chance to remove anything.
+	s.snapConfirmed = cloneFindings(final)
+	s.stageCounts["confirmed"] = len(final)
+
+	preRefine := byID(final)
 	final = e.runRefinePass(ctx, final, s.chunks)
+	markDropped(s, preRefine, final, "refine")
 	if e.Cfg.Precision.Reachability {
 		idx := callgraph.BuildReach(s.astList, s.graph.CallersByFile())
 		if s.reachableFiles != nil {
@@ -80,14 +110,18 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	})
 	if e.Cfg.Precision.DropUnconfirmed {
 		before := len(final)
+		pre := byID(final)
 		final = dropUnconfirmedFindings(final)
+		markDropped(s, pre, final, "drop_unconfirmed")
 		if dropped := before - len(final); dropped > 0 {
 			e.logf("dropped %d unconfirmed findings (verifier=inconclusive && deep=inconclusive)", dropped)
 		}
 	}
 	if e.Cfg.Precision.DropImpactFail {
 		before := len(final)
+		pre := byID(final)
 		final = dropImpactFailFindings(final)
+		markDropped(s, pre, final, "drop_impact_fail")
 		if dropped := before - len(final); dropped > 0 {
 			e.logf("dropped %d findings (impact gate = fail)", dropped)
 		}
@@ -98,8 +132,13 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	if n := e.applyCalibration(final); n > 0 {
 		e.logf("calibration: remapped %d scores", n)
 	}
+	prePolicy := byID(final)
 	final = e.dropByPolicy(final, s.report)
+	markDropped(s, prePolicy, final, "policy")
+
+	preBaseline := byID(final)
 	final = e.applyBaseline(s.cacheDB, final)
+	markDropped(s, preBaseline, final, "baseline")
 	e.prog().Done("post-process")
 
 	for _, f := range final {
@@ -111,7 +150,57 @@ func stagePostProcess(ctx context.Context, e *Engine, s *runState) error {
 	s.report.Stats.RootCauses = len(s.report.Groups)
 	s.report.Findings = final
 	s.final = final
+	s.snapFinal = cloneFindings(final)
+	s.stageCounts["final"] = len(final)
 	return nil
+}
+
+func cloneFindings(in []types.Finding) []types.Finding {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]types.Finding, len(in))
+	copy(out, in)
+	return out
+}
+
+// byID indexes findings by stable id (file:line:rule:agent) so we can compute
+// the set difference after a filter pass — that's how we attribute drops.
+func byID(in []types.Finding) map[string]types.Finding {
+	m := make(map[string]types.Finding, len(in))
+	for _, f := range in {
+		m[findingKey(f)] = f
+	}
+	return m
+}
+
+func findingKey(f types.Finding) string {
+	if f.ID != "" {
+		return f.ID
+	}
+	return fmt.Sprintf("%s:%d:%s:%s", f.File, f.StartLine, f.RuleID, f.Agent)
+}
+
+// markDropped records the stage that removed each finding present in 'before'
+// but missing from 'after'. First-write-wins: a finding's drop reason is the
+// earliest stage that dropped it (in case downstream stages also exclude it).
+func markDropped(s *runState, before map[string]types.Finding, after []types.Finding, stage string) {
+	if s.dropReasons == nil {
+		return
+	}
+	kept := make(map[string]struct{}, len(after))
+	for _, f := range after {
+		kept[findingKey(f)] = struct{}{}
+	}
+	for id := range before {
+		if _, ok := kept[id]; ok {
+			continue
+		}
+		if _, already := s.dropReasons[id]; already {
+			continue
+		}
+		s.dropReasons[id] = stage
+	}
 }
 
 // dropSecretFindings discards any finding whose rule_id or agent identifies

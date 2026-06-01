@@ -82,7 +82,7 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 			e.logf("scanner %s disabled: %v", name, err)
 			continue
 		}
-		scannerClients[name] = client
+		scannerClients[name] = llm.Tag(client, "scanner."+name)
 		if sk, ok := skillByName[name]; ok && sk.Prompt != "" {
 			scannerPrompts[name] = sk.Prompt
 		}
@@ -95,7 +95,7 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 	var cfilter *agents.ContextFilter
 	if e.Cfg.IsAgentEnabled("context_filter") && index != nil {
 		if cl, err := llm.New(e.Cfg.ResolveModel("context_filter")); err == nil {
-			cfilter = &agents.ContextFilter{Client: cl}
+			cfilter = &agents.ContextFilter{Client: llm.Tag(cl, "context_filter")}
 		} else {
 			e.logf("context_filter disabled: %v", err)
 		}
@@ -111,6 +111,7 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 		if err != nil {
 			e.logf("verifier disabled: %v", err)
 		} else {
+			cl = llm.Tag(cl, "verifier")
 			planVerifier = e.maybeBuildPlanVerifier(cl, sc)
 			if planVerifier == nil {
 				verifier = &agents.Verifier{Client: cl, PromptOverride: e.loadSpecialSkill("_fpcheck-verifier")}
@@ -122,7 +123,7 @@ func (e *Engine) buildDAG(scannerNames []string, skillByName map[string]*skills.
 	var fpFilter *agents.FPFilter
 	if e.Cfg.IsAgentEnabled("fp_filter") {
 		if cl, err := llm.New(e.Cfg.ResolveModel("fp_filter")); err == nil {
-			fpFilter = &agents.FPFilter{Client: cl}
+			fpFilter = &agents.FPFilter{Client: llm.Tag(cl, "fp_filter")}
 		} else {
 			e.logf("fp_filter disabled: %v", err)
 			fpFilter = &agents.FPFilter{}

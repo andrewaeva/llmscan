@@ -28,6 +28,7 @@ func main() {
 	root.AddCommand(harnessCmd())
 	root.AddCommand(evalCmd())
 	root.AddCommand(benchCmd())
+	root.AddCommand(costCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

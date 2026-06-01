@@ -78,6 +78,12 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 		e.logf("deep: provider %s does not support tool-calling (deep skipped)", spec.Provider)
 		return findings
 	}
+	// Tag tc for the deep tool-loop. Debate is tagged separately below from
+	// the untagged rawClient so its plain Complete calls don't double-emit a
+	// 'deep' log entry.
+	if tagged, ok := llm.Tag(tc, "deep").(llm.ToolClient); ok {
+		tc = tagged
+	}
 
 	// 3) Pick hotspots from final findings: severity >= threshold, not FP, not
 	//    suppressed. Sort by severity (worst first), then file:line, cap.
@@ -113,6 +119,9 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 	e.logf("deep: verifying %d hotspots (budget=%d, conc=%d, model=%s)",
 		len(hotspots), deepBudget(cfg), conc, spec.Model)
 
+	e.prog().Stage("deep", len(hotspots))
+	defer e.prog().Done("deep")
+
 	// 4) Fan out.
 	agent := &agents.DeepAgent{
 		Client:    tc,
@@ -145,6 +154,7 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 				hs.index, hs.finding.File, hs.finding.StartLine, res.Verdict,
 				time.Since(t0).Milliseconds(), len(res.Trace))
 			applyDeepResult(&findings[hs.index], res)
+			e.prog().Inc("deep", 1)
 		}()
 	}
 	wg.Wait()
@@ -159,7 +169,7 @@ func (e *Engine) runDeepPass(ctx context.Context, target string, cdb cache.Cache
 		for _, h := range hotspots {
 			indices = append(indices, h.index)
 		}
-		e.runDebatePass(ctx, rawClient, findings, indices)
+		e.runDebatePass(ctx, llm.Tag(rawClient, "debate"), findings, indices)
 	}
 	return findings
 }
@@ -195,6 +205,8 @@ func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []ty
 	}
 	g := buildDebateGraph(deb, e.logf)
 	start := time.Now()
+	e.prog().Stage("debate", len(indices))
+	defer e.prog().Done("debate")
 	var splits, agreed int
 	for _, i := range indices {
 		st := &debateState{f: &findings[i]}
@@ -208,6 +220,7 @@ func (e *Engine) runDebatePass(ctx context.Context, cl llm.Client, findings []ty
 		case "tp", "fp":
 			agreed++
 		}
+		e.prog().Inc("debate", 1)
 	}
 	e.logf("debate: %d agreed, %d split (in %s)", agreed, splits, time.Since(start).Round(time.Millisecond))
 }

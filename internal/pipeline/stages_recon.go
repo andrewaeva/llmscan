@@ -56,6 +56,7 @@ func stageRecon(ctx context.Context, e *Engine, s *runState) error {
 		e.logf("recon: llm new: %v (skipping recon)", err)
 		return nil
 	}
+	client = llm.Tag(client, "recon")
 
 	doc, err := recon.Summarize(ctx, client, sample, entries, maxBytes)
 	if err != nil {
