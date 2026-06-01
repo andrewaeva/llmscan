@@ -180,7 +180,7 @@ func (s *Sandbox) Grep(pattern, pathGlob string, maxMatches int) (string, error)
 			}
 			if d.IsDir() {
 				name := d.Name()
-				if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" || name == "build" {
+				if name == ".git" || name == ".llmscan" || name == "node_modules" || name == "vendor" || name == "dist" || name == "build" {
 					return filepath.SkipDir
 				}
 				return nil
