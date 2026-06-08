@@ -13,13 +13,14 @@
 
 default_model:
   provider: anthropic
-  model: claude-haiku-4-5
+  model: claude-sonnet-4-6
   base_url: https://api.eliza.yandex.net/raw/anthropic
   api_key_env: ANTHROPIC_API_KEY
   temperature: 0.1
   max_tokens: 4096
 
 agents:
+  orchestrator: {enabled: false}
   verifier:
     enabled: true
     model:
@@ -38,6 +39,17 @@ agents:
       api_key_env: ANTHROPIC_API_KEY
       temperature: 0.1
       max_tokens: 4096
+  generic: {enabled: true}
+  injection: {enabled: false}
+  deserialization: {enabled: false}
+  ssrf: {enabled: false}
+  crypto: {enabled: false}
+  auth: {enabled: false}
+  insecure-defaults: {enabled: false}
+  error-handling: {enabled: true}
+  race-conditions: {enabled: false}
+  memory-safety: {enabled: false}
+  supply-chain: {enabled: false}
 
 deep:
   enabled: true
@@ -52,3 +64,7 @@ llm:
   max_retries: 6
   retry_base_delay_ms: 1000
   retry_max_delay_ms: 30000
+
+recon:
+  enabled: true
+  reuse: true

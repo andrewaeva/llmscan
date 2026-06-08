@@ -1,0 +1,10 @@
+agents:
+  injection: {enabled: false}
+  deserialization: {enabled: false}
+  ssrf: {enabled: false}
+  insecure-defaults: {enabled: false}
+  generic: {enabled: true}
+  error-handling: {enabled: false}
+  race-conditions: {enabled: false}
+  memory-safety: {enabled: false}
+  supply-chain: {enabled: false}
