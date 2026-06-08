@@ -6,4 +6,5 @@ dist/
 build/
 coverage.out
 *.prof
+.DS_Store
 !cmd/llmscan/

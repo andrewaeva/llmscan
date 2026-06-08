@@ -17,7 +17,7 @@ docker run --rm -e ANTHROPIC_API_KEY -v "$PWD:/work" \
 # go install
 go install github.com/andrewaeva/llmscan/cmd/llmscan@latest
 
-# Из исходников (Go 1.24+, без CGO)
+# Из исходников (Go 1.25+, без CGO)
 git clone https://github.com/andrewaeva/llmscan && cd llmscan
 go build -o llmscan ./cmd/llmscan
 ```
