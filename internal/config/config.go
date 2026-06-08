@@ -369,7 +369,7 @@ func Default() Config {
 			MaxFiles:       100000,
 			VCS:            "auto",
 			Exclude: []string{
-				".git/", "node_modules/", "vendor/", "dist/", "build/", "target/",
+				".git/", ".llmscan/", "node_modules/", "vendor/", "dist/", "build/", "target/",
 				".venv/", "venv/", "__pycache__/", ".idea/", ".vscode/",
 				"*.min.js", "*.lock", "*.sum", "go.sum",
 			},
