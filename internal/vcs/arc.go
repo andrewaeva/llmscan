@@ -238,6 +238,10 @@ func (a *arcVCS) IsTracked(ctx context.Context, file string) (bool, error) {
 	}
 	if _, err := a.runArc(ctx, 5*time.Second, "info", rel); err == nil {
 		return true, nil
+	} else if errors.Is(err, ErrUnsupported) {
+		// arc CLI is unavailable — surface it like the other methods rather
+		// than silently reporting the file as untracked.
+		return false, err
 	}
 	out, err := a.runArc(ctx, 5*time.Second, "status", "--porcelain", "--", rel)
 	if err != nil {

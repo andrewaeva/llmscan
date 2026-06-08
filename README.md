@@ -375,8 +375,6 @@ CLI: `--inflight-limit N` перебивает yaml. На каждом ретр�
 - **plan_verifier выдаёт «invalid character after top-level value»**:
   починено через brace-aware ExtractJSON + `llm.CompleteJSON` retry с
   коррекцией (см. `internal/llm/json.go`).
-- **Известный failing test** в `internal/vcs`: `TestArcMethodsReturnUnsupportedWithoutCLI`
-  падает на машине где установлен `arc` CLI (Yandex Arc). Не блокирующий.
 
 ## Development
 
