@@ -20,6 +20,7 @@ default_model:
   max_tokens: 4096
 
 agents:
+  orchestrator: {enabled: false}
   verifier:
     enabled: true
     model:
@@ -45,7 +46,7 @@ agents:
   crypto: {enabled: false}
   auth: {enabled: false}
   insecure-defaults: {enabled: false}
-  error-handling: {enabled: false}
+  error-handling: {enabled: true}
   race-conditions: {enabled: false}
   memory-safety: {enabled: false}
   supply-chain: {enabled: false}
