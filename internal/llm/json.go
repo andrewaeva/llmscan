@@ -41,52 +41,65 @@ func CompleteJSON(ctx context.Context, c Client, req Request, retries int) (Resp
 // escape aware) so trailing content like double-encoded JSON or chatty
 // epilogues do not break json.Unmarshal.
 func ExtractJSON(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		// strip first fence line
-		if i := strings.Index(s, "\n"); i >= 0 {
-			s = s[i+1:]
-		}
-		if j := strings.LastIndex(s, "```"); j >= 0 {
-			s = s[:j]
-		}
-		s = strings.TrimSpace(s)
-	}
-	// Find the first '{' or '['.
-	start := -1
-	var open, close byte
-	for i := 0; i < len(s); i++ {
-		if s[i] == '{' || s[i] == '[' {
-			start = i
-			open = s[i]
-			if open == '{' {
-				close = '}'
-			} else {
-				close = ']'
-			}
-			break
-		}
-	}
+	s = stripCodeFence(strings.TrimSpace(s))
+	start, open, closer := firstDelim(s)
 	if start < 0 {
 		return s
 	}
-	// Brace-aware scan, respecting string literals.
+	if end := matchDelim(s, start, open, closer); end > start {
+		return s[start : end+1]
+	}
+	// Unbalanced — fall back to greedy first..last.
+	if j := strings.LastIndexAny(s, "}]"); j > start {
+		return s[start : j+1]
+	}
+	return s[start:]
+}
+
+// stripCodeFence removes a leading ```lang fence and its trailing ``` if present.
+func stripCodeFence(s string) string {
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	if i := strings.Index(s, "\n"); i >= 0 {
+		s = s[i+1:]
+	}
+	if j := strings.LastIndex(s, "```"); j >= 0 {
+		s = s[:j]
+	}
+	return strings.TrimSpace(s)
+}
+
+// firstDelim returns the index of the first '{' or '[' plus the matching
+// open/close byte pair. start is -1 when neither is found.
+func firstDelim(s string) (start int, open, closer byte) {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			return i, '{', '}'
+		case '[':
+			return i, '[', ']'
+		}
+	}
+	return -1, 0, 0
+}
+
+// matchDelim scans from start and returns the index of the closer that balances
+// the open delimiter, respecting string literals and escapes. Returns -1 when
+// unbalanced.
+func matchDelim(s string, start int, open, closer byte) int {
 	depth := 0
 	inStr := false
 	esc := false
-	end := -1
 	for i := start; i < len(s); i++ {
 		c := s[i]
 		if inStr {
-			if esc {
+			switch {
+			case esc:
 				esc = false
-				continue
-			}
-			if c == '\\' {
+			case c == '\\':
 				esc = true
-				continue
-			}
-			if c == '"' {
+			case c == '"':
 				inStr = false
 			}
 			continue
@@ -96,22 +109,12 @@ func ExtractJSON(s string) string {
 			inStr = true
 		case open:
 			depth++
-		case close:
+		case closer:
 			depth--
 			if depth == 0 {
-				end = i
+				return i
 			}
 		}
-		if end >= 0 {
-			break
-		}
 	}
-	if end > start {
-		return s[start : end+1]
-	}
-	// Unbalanced — fall back to greedy first..last.
-	if j := strings.LastIndexAny(s, "}]"); j > start {
-		return s[start : j+1]
-	}
-	return s[start:]
+	return -1
 }

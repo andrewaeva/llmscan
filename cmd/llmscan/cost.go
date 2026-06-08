@@ -81,23 +81,28 @@ type bucket struct {
 	USD       float64 `json:"usd,omitempty"`
 }
 
-func runCost(logPath, pricesPath string, jsonOut bool) error {
-	var book *priceBook
-	if pricesPath != "" {
-		b, err := os.ReadFile(pricesPath) //nolint:gosec // operator-supplied path
-		if err != nil {
-			return fmt.Errorf("read prices: %w", err)
-		}
-		var pb priceBook
-		if err := yaml.Unmarshal(b, &pb); err != nil {
-			return fmt.Errorf("parse prices: %w", err)
-		}
-		book = &pb
+// loadPriceBook reads an optional price list; returns nil when pricesPath is empty.
+func loadPriceBook(pricesPath string) (*priceBook, error) {
+	if pricesPath == "" {
+		return nil, nil
 	}
+	b, err := os.ReadFile(pricesPath) //nolint:gosec // operator-supplied path
+	if err != nil {
+		return nil, fmt.Errorf("read prices: %w", err)
+	}
+	var pb priceBook
+	if err := yaml.Unmarshal(b, &pb); err != nil {
+		return nil, fmt.Errorf("parse prices: %w", err)
+	}
+	return &pb, nil
+}
 
+// scanCostBuckets reads a JSONL llm-log and aggregates entries by stage|model.
+// Returns the buckets and the count of well-formed lines.
+func scanCostBuckets(logPath string) (map[string]*bucket, int, error) {
 	fh, err := os.Open(logPath) //nolint:gosec // operator-supplied path
 	if err != nil {
-		return fmt.Errorf("open log: %w", err)
+		return nil, 0, fmt.Errorf("open log: %w", err)
 	}
 	defer fh.Close()
 
@@ -130,7 +135,20 @@ func runCost(logPath, pricesPath string, jsonOut bool) error {
 		b.LatencyMS += e.LatencyMS
 	}
 	if err := sc.Err(); err != nil {
-		return fmt.Errorf("scan log: %w", err)
+		return nil, 0, fmt.Errorf("scan log: %w", err)
+	}
+	return buckets, lines, nil
+}
+
+func runCost(logPath, pricesPath string, jsonOut bool) error {
+	book, err := loadPriceBook(pricesPath)
+	if err != nil {
+		return err
+	}
+
+	buckets, lines, err := scanCostBuckets(logPath)
+	if err != nil {
+		return err
 	}
 
 	rows := make([]*bucket, 0, len(buckets))

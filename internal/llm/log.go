@@ -15,17 +15,17 @@ import (
 // Complete call (success or failure). Stage carries the caller tag set via
 // Tag() or WithStage(ctx,...).
 type LogEntry struct {
-	TS         string `json:"ts"`
-	Stage      string `json:"stage"`
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	TokensIn   int    `json:"tokens_in"`
-	TokensOut  int    `json:"tokens_out"`
-	LatencyMS  int64  `json:"latency_ms"`
-	OK         bool   `json:"ok"`
-	Err        string `json:"error,omitempty"`
-	JSONMode   bool   `json:"json_mode,omitempty"`
-	MsgCount   int    `json:"msg_count,omitempty"`
+	TS        string `json:"ts"`
+	Stage     string `json:"stage"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	TokensIn  int    `json:"tokens_in"`
+	TokensOut int    `json:"tokens_out"`
+	LatencyMS int64  `json:"latency_ms"`
+	OK        bool   `json:"ok"`
+	Err       string `json:"error,omitempty"`
+	JSONMode  bool   `json:"json_mode,omitempty"`
+	MsgCount  int    `json:"msg_count,omitempty"`
 }
 
 // Sink is anywhere LogEntry rows go (typically a JSONL file).
