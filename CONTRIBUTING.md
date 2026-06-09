@@ -13,7 +13,9 @@ make lint        # golangci-lint
 ./llmscan version
 ```
 
-Requires Go 1.24+. SQLite is pure-Go (`modernc.org/sqlite`) — no CGO needed.
+Requires Go 1.25+ and a C toolchain (CGO). SQLite is pure-Go
+(`modernc.org/sqlite`), but the tree-sitter grammars in `internal/ast` are
+cgo, so builds need `CGO_ENABLED=1` and a C compiler (`gcc`/`clang`).
 
 ## Development workflow
 

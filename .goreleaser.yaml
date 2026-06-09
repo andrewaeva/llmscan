@@ -12,8 +12,12 @@ builds:
   - id: llmscan
     main: ./cmd/llmscan
     binary: llmscan
+    # tree-sitter grammars are cgo, so every target needs CGO_ENABLED=1 plus a
+    # matching cross C compiler. The release workflow runs inside the
+    # goreleaser-cross image, which bundles the linux/darwin/windows toolchains
+    # referenced by the per-target CC overrides below.
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     flags:
       - -trimpath
     ldflags:
@@ -28,6 +32,27 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    overrides:
+      - goos: linux
+        goarch: amd64
+        env:
+          - CC=x86_64-linux-gnu-gcc
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CC=o64-clang
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CC=oa64-clang
+      - goos: windows
+        goarch: amd64
+        env:
+          - CC=x86_64-w64-mingw32-gcc
 
 archives:
   - id: default
