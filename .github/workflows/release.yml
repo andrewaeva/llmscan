@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -13,17 +13,18 @@ jobs:
   goreleaser:
     name: goreleaser
     runs-on: ubuntu-latest
+    # goreleaser-cross bundles the linux/darwin/windows C toolchains needed for
+    # the cgo (tree-sitter) cross builds. Pin to the Go version in go.mod.
+    container:
+      image: ghcr.io/goreleaser/goreleaser-cross:v1.25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-          cache: true
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -39,10 +40,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
