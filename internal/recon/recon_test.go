@@ -56,10 +56,3 @@ func TestSampleRespectsCap(t *testing.T) {
 		t.Errorf("cap not respected: got %d", len(got))
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

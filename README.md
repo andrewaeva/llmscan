@@ -17,7 +17,7 @@ docker run --rm -e ANTHROPIC_API_KEY -v "$PWD:/work" \
 # go install
 go install github.com/andrewaeva/llmscan/cmd/llmscan@latest
 
-# Из исходников (Go 1.24+, без CGO)
+# Из исходников (Go 1.25+, требуется CGO для tree-sitter)
 git clone https://github.com/andrewaeva/llmscan && cd llmscan
 go build -o llmscan ./cmd/llmscan
 ```
@@ -375,8 +375,6 @@ CLI: `--inflight-limit N` перебивает yaml. На каждом ретр�
 - **plan_verifier выдаёт «invalid character after top-level value»**:
   починено через brace-aware ExtractJSON + `llm.CompleteJSON` retry с
   коррекцией (см. `internal/llm/json.go`).
-- **Известный failing test** в `internal/vcs`: `TestArcMethodsReturnUnsupportedWithoutCLI`
-  падает на машине где установлен `arc` CLI (Yandex Arc). Не блокирующий.
 
 ## Development
 

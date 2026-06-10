@@ -54,7 +54,7 @@ func Save(target, content string) error {
 	}
 	p := filepath.Join(dir, FileName)
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, p)
@@ -154,7 +154,7 @@ func Summarize(ctx context.Context, client llm.Client, files []types.FileTarget,
 	b.WriteString("Files sampled for architecture analysis (entry points, config, top-level):\n\n")
 	for _, f := range files {
 		fmt.Fprintf(&b, "## %s\n```\n", f.Path)
-		body := string(f.Content)
+		body := f.Content
 		if len(body) > 4000 {
 			body = body[:4000] + "\n...[truncated]\n"
 		}

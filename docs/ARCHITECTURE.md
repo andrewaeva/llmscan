@@ -1,6 +1,6 @@
 # llmscan Architecture
 
-LLM-multi-agent SAST поверх детерминированных слоёв. CGO-free Go. Цель — высокая precision при контролируемом расходе токенов и воспроизводимом CI.
+LLM-multi-agent SAST поверх детерминированных слоёв. Go + CGO (tree-sitter-грамматики в `internal/ast` — нативные). Цель — высокая precision при контролируемом расходе токенов и воспроизводимом CI.
 
 ## Высокоуровневый вид
 

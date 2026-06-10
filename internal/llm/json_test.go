@@ -17,10 +17,10 @@ func TestExtractJSON(t *testing.T) {
 		`no braces here`:                            `no braces here`,
 		// Trailing content / double-encoded JSON / chatty epilogue — cut at
 		// the matching brace, not at the last `}` in the buffer.
-		`{"a":1} {"b":2}`:                              `{"a":1}`,
-		`{"s":"} not a close"}`:                        `{"s":"} not a close"}`,
-		`{"nested":{"x":1}} trailing prose`:            `{"nested":{"x":1}}`,
-		`[1,2,3] trailing`:                             `[1,2,3]`,
+		`{"a":1} {"b":2}`:                   `{"a":1}`,
+		`{"s":"} not a close"}`:             `{"s":"} not a close"}`,
+		`{"nested":{"x":1}} trailing prose`: `{"nested":{"x":1}}`,
+		`[1,2,3] trailing`:                  `[1,2,3]`,
 	}
 	for in, want := range cases {
 		got := ExtractJSON(in)

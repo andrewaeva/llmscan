@@ -9,6 +9,10 @@ ARG TARGETARCH=amd64
 
 WORKDIR /src
 
+# tree-sitter grammars are cgo, so CGO is required. gcc + musl-dev provide the
+# toolchain; static linking against musl keeps the runtime image dependency-free.
+RUN apk add --no-cache gcc musl-dev
+
 # Cache module downloads.
 COPY go.mod go.sum ./
 RUN go mod download
@@ -16,13 +20,13 @@ RUN go mod download
 # Bring in the rest of the sources.
 COPY . .
 
-ENV CGO_ENABLED=0 \
+ENV CGO_ENABLED=1 \
     GOOS=${TARGETOS} \
     GOARCH=${TARGETARCH}
 
 RUN go build \
         -trimpath \
-        -ldflags "-s -w -X main.Version=${VERSION}" \
+        -ldflags "-s -w -X main.Version=${VERSION} -linkmode external -extldflags '-static'" \
         -o /out/llmscan \
         ./cmd/llmscan
 

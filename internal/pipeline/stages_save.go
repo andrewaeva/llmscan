@@ -55,13 +55,13 @@ func stageWriteStages(_ context.Context, _ *Engine, s *runState) error {
 		if err != nil {
 			return fmt.Errorf("encode %s: %w", sp.name, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, sp.name), b, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, sp.name), b, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", sp.name, err)
 		}
 	}
 
 	summary := renderFunnelSummary(s)
-	if err := os.WriteFile(filepath.Join(dir, "stages-summary.txt"), []byte(summary), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "stages-summary.txt"), []byte(summary), 0o600); err != nil {
 		return fmt.Errorf("write stages-summary.txt: %w", err)
 	}
 	return nil
@@ -105,13 +105,13 @@ func renderFunnelSummary(s *runState) string {
 		}
 
 		// Stable stage order matching the pipeline.
-		stageOrder := []string{
+		canonical := []string{
 			"drop_secret", "suppressed", "refine",
 			"drop_unconfirmed", "drop_impact_fail",
 			"policy", "baseline",
 		}
 		seen := map[string]bool{}
-		for _, st := range stageOrder {
+		for _, st := range canonical {
 			seen[st] = true
 		}
 		// Append any other stages that appeared but aren't in the canonical list.
@@ -122,6 +122,8 @@ func renderFunnelSummary(s *runState) string {
 			}
 		}
 		sort.Strings(extras)
+		stageOrder := make([]string, 0, len(canonical)+len(extras))
+		stageOrder = append(stageOrder, canonical...)
 		stageOrder = append(stageOrder, extras...)
 
 		fmt.Fprintf(&b, "\nDropped findings by stage (%d total):\n", len(s.dropReasons))
